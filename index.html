@@ -15,6 +15,7 @@
 
   <header class="app-header">
     <h1 class="app-title">アイパッチトレーニング記録</h1>
+    <p class="sync-badge" id="sync-badge">同期状況を確認中…</p>
   </header>
 
   <main>
@@ -142,6 +143,18 @@
       <h2>設定</h2>
 
       <div class="field-block">
+        <label for="household-code-input">共有コード（合言葉）</label>
+        <input type="text" id="household-code-input" autocapitalize="characters" spellcheck="false" />
+        <p class="settings-note">この文字列を配偶者にも伝えて同じものを入力してもらうと、記録が自動的に共有されます。他の人に知られないよう注意してください。</p>
+        <div class="household-code-buttons">
+          <button type="button" id="household-code-copy-btn" class="btn-secondary">コードをコピー</button>
+          <button type="button" id="household-code-save-btn" class="btn-primary">この共有コードを使う</button>
+        </div>
+      </div>
+
+      <hr />
+
+      <div class="field-block">
         <label>アイパッチをつける目</label>
         <div class="eye-toggle" id="eye-toggle">
           <button type="button" class="eye-toggle-btn" data-eye="right">右目</button>
@@ -158,7 +171,7 @@
       <hr />
 
       <h2>バックアップ</h2>
-      <p class="settings-note">記録はすべてこの端末の中だけに保存されています。機種変更や万一に備えて、ときどきファイルに書き出しておくことをおすすめします。</p>
+      <p class="settings-note">記録は共有コードごとにクラウド（Firebase）に保存されています。念のため、ときどきファイルに書き出して保存しておくことをおすすめします。</p>
       <button id="export-btn" class="btn-secondary">JSONファイルに書き出す</button>
       <button id="import-btn" class="btn-secondary">JSONファイルから読み込む</button>
       <input type="file" id="import-file" accept="application/json,.json" class="hidden" />
@@ -179,6 +192,10 @@
   </nav>
 </div>
 
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
+<script src="firebase-config.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

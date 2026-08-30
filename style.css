@@ -73,6 +73,16 @@ body {
   color: var(--color-primary);
 }
 
+.sync-badge {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.sync-badge.sync-offline {
+  color: var(--color-not-done-dark);
+}
+
 main {
   flex: 1;
   padding: 12px 20px calc(96px + var(--safe-bottom));
@@ -556,6 +566,17 @@ textarea:focus {
   border-color: var(--color-primary);
   background: var(--color-primary);
   color: var(--color-primary-contrast);
+}
+
+.household-code-buttons {
+  display: flex;
+  gap: 10px;
+  margin-top: 12px;
+}
+
+.household-code-buttons .btn-secondary,
+.household-code-buttons .btn-primary {
+  margin-bottom: 0;
 }
 
 /* ---------- 設定画面 ---------- */

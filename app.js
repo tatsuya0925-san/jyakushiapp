@@ -1,47 +1,76 @@
 "use strict";
 
-/* ==========================================================
-   データベース（IndexedDB）まわり
-   ========================================================== */
-
-const DB_NAME = "amblyopiaTrainingDB";
-const DB_VERSION = 1;
-const STORE_RECORDS = "records";
-const STORE_SETTINGS = "settings";
 const DEFAULT_GOAL_MINUTES = 120;
 const DEFAULT_EYE = "right";
 
-let dbPromise = null;
+/* ==========================================================
+   共有コード（世帯コード）の管理
+   ========================================================== */
 
-function openDB() {
-  if (dbPromise) return dbPromise;
-  dbPromise = new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, DB_VERSION);
-    req.onupgradeneeded = () => {
-      const db = req.result;
-      if (!db.objectStoreNames.contains(STORE_RECORDS)) {
-        db.createObjectStore(STORE_RECORDS, { keyPath: "date" });
-      }
-      if (!db.objectStoreNames.contains(STORE_SETTINGS)) {
-        db.createObjectStore(STORE_SETTINGS, { keyPath: "key" });
-      }
-    };
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
-  return dbPromise;
+const HOUSEHOLD_CODE_STORAGE_KEY = "amblyopiaHouseholdCode";
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"; // 0,O,1,I,L など紛らわしい文字を除外
+
+function generateHouseholdCode() {
+  const groups = [];
+  for (let g = 0; g < 5; g++) {
+    const randomValues = new Uint8Array(4);
+    crypto.getRandomValues(randomValues);
+    let group = "";
+    for (let i = 0; i < 4; i++) {
+      group += CODE_ALPHABET[randomValues[i] % CODE_ALPHABET.length];
+    }
+    groups.push(group);
+  }
+  return groups.join("-");
 }
 
-function tx(storeName, mode) {
-  return openDB().then((db) => db.transaction(storeName, mode).objectStore(storeName));
+function normalizeHouseholdCode(code) {
+  return (code || "").trim().toUpperCase();
 }
 
-function reqToPromise(req) {
-  return new Promise((resolve, reject) => {
-    req.onsuccess = () => resolve(req.result);
-    req.onerror = () => reject(req.error);
-  });
+function loadHouseholdCode() {
+  let code = localStorage.getItem(HOUSEHOLD_CODE_STORAGE_KEY);
+  if (!code) {
+    code = generateHouseholdCode();
+    localStorage.setItem(HOUSEHOLD_CODE_STORAGE_KEY, code);
+  }
+  return code;
 }
+
+function saveHouseholdCode(code) {
+  const normalized = normalizeHouseholdCode(code);
+  localStorage.setItem(HOUSEHOLD_CODE_STORAGE_KEY, normalized);
+  return normalized;
+}
+
+let householdCode = loadHouseholdCode();
+
+/* ==========================================================
+   Firebase / Firestore まわり
+   ========================================================== */
+
+const FIREBASE_NOT_CONFIGURED =
+  typeof window.firebaseConfig === "undefined" || window.firebaseConfig.apiKey === "YOUR_API_KEY";
+
+let db = null;
+
+function householdDoc() {
+  return db.collection("households").doc(householdCode);
+}
+
+function recordsCol() {
+  return householdDoc().collection("records");
+}
+
+function settingsDocRef() {
+  return householdDoc().collection("settings").doc("app");
+}
+
+const recordsCache = new Map();
+const settingsCache = { dailyGoalMinutes: DEFAULT_GOAL_MINUTES, currentEye: DEFAULT_EYE };
+
+let unsubscribeRecords = null;
+let unsubscribeSettings = null;
 
 function emptyRecord(date) {
   return {
@@ -62,36 +91,120 @@ function eyeLabel(eye) {
   return eye === "left" ? "左目" : "右目";
 }
 
+/** レコード／設定のリアルタイム購読を開始し、最初の1回分のデータが届くまで待つ */
+function attachListeners() {
+  if (unsubscribeRecords) unsubscribeRecords();
+  if (unsubscribeSettings) unsubscribeSettings();
+  recordsCache.clear();
+
+  return new Promise((resolve) => {
+    let recordsReady = false;
+    let settingsReady = false;
+    const maybeResolve = () => {
+      if (recordsReady && settingsReady) resolve();
+    };
+
+    unsubscribeRecords = recordsCol().onSnapshot(
+      (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "removed") {
+            recordsCache.delete(change.doc.id);
+          } else {
+            recordsCache.set(change.doc.id, change.doc.data());
+          }
+        });
+        setSyncStatus(!snapshot.metadata.fromCache);
+        if (!recordsReady) {
+          recordsReady = true;
+          maybeResolve();
+        }
+        onRemoteDataChanged();
+      },
+      () => {
+        setSyncStatus(false);
+        if (!recordsReady) {
+          recordsReady = true;
+          maybeResolve();
+        }
+      }
+    );
+
+    unsubscribeSettings = settingsDocRef().onSnapshot(
+      (snap) => {
+        const data = snap.data() || {};
+        if (typeof data.dailyGoalMinutes === "number") settingsCache.dailyGoalMinutes = data.dailyGoalMinutes;
+        if (data.currentEye === "left" || data.currentEye === "right") settingsCache.currentEye = data.currentEye;
+        state.dailyGoalMinutes = settingsCache.dailyGoalMinutes;
+        state.currentEye = settingsCache.currentEye;
+        goalInput.value = state.dailyGoalMinutes;
+        updateEyeToggleUI();
+        if (!settingsReady) {
+          settingsReady = true;
+          maybeResolve();
+        }
+        onRemoteDataChanged();
+      },
+      () => {
+        if (!settingsReady) {
+          settingsReady = true;
+          maybeResolve();
+        }
+      }
+    );
+  });
+}
+
+function onRemoteDataChanged() {
+  const activeBtn = document.querySelector(".nav-btn.active");
+  const activeView = activeBtn ? activeBtn.dataset.view : "day";
+  if (activeView === "day") {
+    refreshDayViewFromCache();
+  } else if (activeView === "calendar") {
+    renderCalendar();
+  }
+}
+
+async function refreshDayViewFromCache() {
+  const record = await getRecord(state.currentEditDate);
+  if (document.activeElement !== memoInput) {
+    memoInput.value = record.memo || "";
+  }
+  applyRecordToUI(record);
+}
+
+/* ---- データ読み書き（recordsCache 経由。onSnapshot が裏で同期を保つ） ---- */
+
 async function getRecord(date) {
-  const store = await tx(STORE_RECORDS, "readonly");
-  const result = await reqToPromise(store.get(date));
-  return result || emptyRecord(date);
+  return recordsCache.get(date) || emptyRecord(date);
 }
 
 async function putRecord(record) {
-  const store = await tx(STORE_RECORDS, "readwrite");
-  await reqToPromise(store.put(record));
+  await recordsCol().doc(record.date).set(record);
 }
 
 async function getAllRecords() {
-  const store = await tx(STORE_RECORDS, "readonly");
-  return reqToPromise(store.getAll());
+  return [...recordsCache.values()];
 }
 
 async function clearRecords() {
-  const store = await tx(STORE_RECORDS, "readwrite");
-  await reqToPromise(store.clear());
+  const snap = await recordsCol().get();
+  const docs = snap.docs;
+  const chunkSize = 450;
+  for (let i = 0; i < docs.length; i += chunkSize) {
+    const batch = db.batch();
+    docs.slice(i, i + chunkSize).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+  recordsCache.clear();
 }
 
 async function getSetting(key, defaultValue) {
-  const store = await tx(STORE_SETTINGS, "readonly");
-  const result = await reqToPromise(store.get(key));
-  return result ? result.value : defaultValue;
+  return key in settingsCache ? settingsCache[key] : defaultValue;
 }
 
 async function setSetting(key, value) {
-  const store = await tx(STORE_SETTINGS, "readwrite");
-  await reqToPromise(store.put({ key, value }));
+  settingsCache[key] = value;
+  await settingsDocRef().set({ [key]: value }, { merge: true });
 }
 
 /**
@@ -99,12 +212,11 @@ async function setSetting(key, value) {
  * （一部の項目だけ更新しても、他の項目を消さないため）
  */
 async function saveRecordPatch(date, patch) {
-  const current = await getRecord(date);
-  const updated = Object.assign({}, current, patch, {
-    date,
-    updatedAt: new Date().toISOString(),
-  });
-  await putRecord(updated);
+  const fullPatch = Object.assign({}, patch, { date, updatedAt: new Date().toISOString() });
+  await recordsCol().doc(date).set(fullPatch, { merge: true });
+  const current = recordsCache.get(date) || emptyRecord(date);
+  const updated = Object.assign({}, current, fullPatch);
+  recordsCache.set(date, updated);
   return updated;
 }
 
@@ -157,6 +269,20 @@ const state = {
 };
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 52;
+
+/* ==========================================================
+   同期状態バッジ
+   ========================================================== */
+
+const syncBadgeEl = document.getElementById("sync-badge");
+
+function setSyncStatus(online) {
+  if (!syncBadgeEl) return;
+  syncBadgeEl.textContent = online
+    ? "オンラインで同期中"
+    : "オフライン（この端末に保存し、再接続時に同期します）";
+  syncBadgeEl.classList.toggle("sync-offline", !online);
+}
 
 /* ==========================================================
    画面切り替え（タブ）
@@ -457,14 +583,14 @@ async function renderCalendar() {
   renderPeriodSummary(allRecords);
 }
 
-function renderPeriodSummary(recordsCache) {
+function renderPeriodSummary(recordsList) {
   const rangeStart = state.periodStart < state.periodEnd ? state.periodStart : state.periodEnd;
   const rangeEnd = state.periodStart < state.periodEnd ? state.periodEnd : state.periodStart;
 
   const dayCount =
     Math.round((keyToDate(rangeEnd) - keyToDate(rangeStart)) / 86400000) + 1;
 
-  const recordsInRange = recordsCache.filter((r) => r.date >= rangeStart && r.date <= rangeEnd);
+  const recordsInRange = recordsList.filter((r) => r.date >= rangeStart && r.date <= rangeEnd);
 
   const total = recordsInRange.reduce((sum, r) => sum + (r.minutes || 0), 0);
   const average = dayCount > 0 ? total / dayCount : 0;
@@ -494,6 +620,9 @@ periodEndInput.addEventListener("change", () => {
    設定画面
    ========================================================== */
 
+const householdCodeInput = document.getElementById("household-code-input");
+const householdCodeCopyBtn = document.getElementById("household-code-copy-btn");
+const householdCodeSaveBtn = document.getElementById("household-code-save-btn");
 const eyeToggleButtons = document.querySelectorAll(".eye-toggle-btn");
 const goalInput = document.getElementById("goal-input");
 const goalSaveBtn = document.getElementById("goal-save-btn");
@@ -501,6 +630,46 @@ const exportBtn = document.getElementById("export-btn");
 const importBtn = document.getElementById("import-btn");
 const importFile = document.getElementById("import-file");
 const backupStatus = document.getElementById("backup-status");
+
+let backupStatusTimer = null;
+function flashBackupStatus(message) {
+  backupStatus.textContent = message;
+  if (backupStatusTimer) clearTimeout(backupStatusTimer);
+  backupStatusTimer = setTimeout(() => {
+    backupStatus.textContent = " ";
+  }, 2200);
+}
+
+householdCodeCopyBtn.addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(householdCodeInput.value.trim());
+    flashBackupStatus("コピーしました");
+  } catch (err) {
+    flashBackupStatus("コピーできませんでした。手動で選択してコピーしてください");
+  }
+});
+
+householdCodeSaveBtn.addEventListener("click", async () => {
+  const newCode = normalizeHouseholdCode(householdCodeInput.value);
+  if (!newCode) {
+    flashBackupStatus("共有コードを入力してください");
+    return;
+  }
+  if (newCode === householdCode) {
+    flashBackupStatus("同じ共有コードです");
+    return;
+  }
+  const ok = window.confirm(
+    "共有コードを切り替えます。これ以降は、この合言葉を共有している人とだけデータを共有します。よろしいですか？"
+  );
+  if (!ok) return;
+
+  householdCode = saveHouseholdCode(newCode);
+  householdCodeInput.value = householdCode;
+  await attachListeners();
+  await loadDayView(state.currentEditDate);
+  flashBackupStatus("共有コードを切り替えました");
+});
 
 function updateEyeToggleUI() {
   eyeToggleButtons.forEach((btn) => {
@@ -529,15 +698,6 @@ goalSaveBtn.addEventListener("click", async () => {
   updateRing(rec.minutes || 0, !!rec.notDone);
   flashBackupStatus("目標を保存しました");
 });
-
-let backupStatusTimer = null;
-function flashBackupStatus(message) {
-  backupStatus.textContent = message;
-  if (backupStatusTimer) clearTimeout(backupStatusTimer);
-  backupStatusTimer = setTimeout(() => {
-    backupStatus.textContent = " ";
-  }, 2200);
-}
 
 exportBtn.addEventListener("click", async () => {
   const records = await getAllRecords();
@@ -576,7 +736,7 @@ importFile.addEventListener("change", async () => {
       throw new Error("invalid format");
     }
     const ok = window.confirm(
-      "今の端末のデータを、このファイルの内容ですべて置き換えます。よろしいですか？"
+      "今の共有コードのデータを、このファイルの内容ですべて置き換えます。よろしいですか？"
     );
     if (!ok) return;
 
@@ -619,11 +779,41 @@ importFile.addEventListener("change", async () => {
    初期化
    ========================================================== */
 
+function showConfigNotReadyMessage() {
+  Object.values(views).forEach((el) => el.classList.remove("active"));
+  const dayView = views.day;
+  dayView.classList.add("active");
+  dayView.innerHTML =
+    '<div class="field-block">' +
+    "<p>Firebaseの設定がまだ完了していません。</p>" +
+    "<p>firebase-config.js に設定情報を貼り付けてから、もう一度開いてください。</p>" +
+    "</div>";
+}
+
 async function init() {
-  state.dailyGoalMinutes = await getSetting("dailyGoalMinutes", DEFAULT_GOAL_MINUTES);
+  if (FIREBASE_NOT_CONFIGURED) {
+    showConfigNotReadyMessage();
+    return;
+  }
+
+  firebase.initializeApp(window.firebaseConfig);
+  db = firebase.firestore();
+  try {
+    await db.enablePersistence({ synchronizeTabs: true });
+  } catch (err) {
+    /* オフラインキャッシュに対応できない環境でも、オンライン中心で動作は続けられる */
+  }
+  await firebase.auth().signInAnonymously();
+
+  householdCodeInput.value = householdCode;
+
+  await attachListeners();
+
+  state.dailyGoalMinutes = settingsCache.dailyGoalMinutes;
+  state.currentEye = settingsCache.currentEye;
   goalInput.value = state.dailyGoalMinutes;
-  state.currentEye = await getSetting("currentEye", DEFAULT_EYE);
   updateEyeToggleUI();
+
   await loadDayView(todayKey());
 
   if ("serviceWorker" in navigator) {
