@@ -9,6 +9,7 @@ const DB_VERSION = 1;
 const STORE_RECORDS = "records";
 const STORE_SETTINGS = "settings";
 const DEFAULT_GOAL_MINUTES = 120;
+const DEFAULT_EYE = "right";
 
 let dbPromise = null;
 
@@ -42,10 +43,29 @@ function reqToPromise(req) {
   });
 }
 
+function emptyRecord(date) {
+  return {
+    date,
+    slot1Start: null,
+    slot1End: null,
+    slot2Start: null,
+    slot2End: null,
+    minutes: 0,
+    notDone: false,
+    eye: null,
+    memo: "",
+    updatedAt: null,
+  };
+}
+
+function eyeLabel(eye) {
+  return eye === "left" ? "左目" : "右目";
+}
+
 async function getRecord(date) {
   const store = await tx(STORE_RECORDS, "readonly");
   const result = await reqToPromise(store.get(date));
-  return result || { date, minutes: 0, memo: "", updatedAt: null };
+  return result || emptyRecord(date);
 }
 
 async function putRecord(record) {
@@ -76,7 +96,7 @@ async function setSetting(key, value) {
 
 /**
  * 指定した日付の記録に、渡した項目だけを上書き保存する。
- * （分だけ更新／メモだけ更新、のどちらでも他方を消さないため）
+ * （一部の項目だけ更新しても、他の項目を消さないため）
  */
 async function saveRecordPatch(date, patch) {
   const current = await getRecord(date);
@@ -114,15 +134,26 @@ function todayKey() {
   return dateToKey(new Date());
 }
 
+function monthRange(year, month) {
+  const start = `${year}-${pad2(month + 1)}-01`;
+  const end = dateToKey(new Date(year, month + 1, 0));
+  return { start, end };
+}
+
 /* ==========================================================
    アプリの状態
    ========================================================== */
+
+const initialMonthRange = monthRange(new Date().getFullYear(), new Date().getMonth());
 
 const state = {
   dailyGoalMinutes: DEFAULT_GOAL_MINUTES,
   currentEditDate: todayKey(),
   calendarYear: new Date().getFullYear(),
   calendarMonth: new Date().getMonth(), // 0-11
+  periodStart: initialMonthRange.start,
+  periodEnd: initialMonthRange.end,
+  currentEye: DEFAULT_EYE,
 };
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 52;
@@ -159,22 +190,90 @@ document.querySelectorAll(".nav-btn").forEach((btn) => {
 
 const dayDateLabel = document.getElementById("day-date-label");
 const backToTodayBtn = document.getElementById("back-to-today-btn");
-const minutesInput = document.getElementById("minutes-input");
+const notDoneBtn = document.getElementById("not-done-btn");
+const eyeIndicatorEl = document.getElementById("eye-indicator");
+const timeSlotsEl = document.getElementById("time-slots");
 const memoInput = document.getElementById("memo-input");
 const saveStatus = document.getElementById("save-status");
 const ringProgress = document.getElementById("ring-progress");
 const ringMinutes = document.getElementById("ring-minutes");
 const ringGoalText = document.getElementById("ring-goal-text");
 const ringPercent = document.getElementById("ring-percent");
+const slot1DurationEl = document.getElementById("slot1-duration");
+const slot2DurationEl = document.getElementById("slot2-duration");
 
-function updateRing(minutes) {
+/* ---- 時刻入力（プルダウン兼用のネイティブ時刻ピッカー） ---- */
+
+function timeInputOf(slot, edge) {
+  return document.querySelector(`.time-input[data-slot="${slot}"][data-edge="${edge}"]`);
+}
+
+function applyTimeToInput(slot, edge, timeStr) {
+  timeInputOf(slot, edge).value = timeStr || "";
+}
+
+function readTimeFromInput(slot, edge) {
+  const value = timeInputOf(slot, edge).value;
+  return value || null;
+}
+
+function minutesFromTimeString(str) {
+  if (!str) return null;
+  const parts = str.split(":").map(Number);
+  return parts[0] * 60 + parts[1];
+}
+
+/** 開始・終了のどちらかが未入力、または終了が開始より前の場合は 0 分として扱う */
+function durationMinutes(startStr, endStr) {
+  if (!startStr || !endStr) return 0;
+  const s = minutesFromTimeString(startStr);
+  const e = minutesFromTimeString(endStr);
+  return Math.max(0, e - s);
+}
+
+function updateRing(minutes, notDone) {
   const goal = state.dailyGoalMinutes || DEFAULT_GOAL_MINUTES;
-  const ratio = goal > 0 ? Math.min(minutes / goal, 1) : 0;
-  const offset = RING_CIRCUMFERENCE * (1 - ratio);
-  ringProgress.style.strokeDashoffset = String(offset);
-  ringMinutes.textContent = String(minutes);
-  ringGoalText.textContent = `/ 目標${goal}分`;
-  ringPercent.textContent = `${Math.round(ratio * 100)}%`;
+  const ratio = notDone ? 0 : goal > 0 ? Math.min(minutes / goal, 1) : 0;
+  ringProgress.style.strokeDashoffset = String(RING_CIRCUMFERENCE * (1 - ratio));
+  ringProgress.classList.toggle("ring-progress-muted", !!notDone);
+  if (notDone) {
+    ringMinutes.textContent = "-";
+    ringGoalText.textContent = "未実施";
+    ringPercent.textContent = "";
+  } else {
+    ringMinutes.textContent = String(minutes);
+    ringGoalText.textContent = `/ 目標${goal}分`;
+    ringPercent.textContent = `${Math.round(ratio * 100)}%`;
+  }
+}
+
+function updateSlotDurationTexts(slot1Start, slot1End, slot2Start, slot2End) {
+  const d1 = durationMinutes(slot1Start, slot1End);
+  const d2 = durationMinutes(slot2Start, slot2End);
+  slot1DurationEl.textContent = slot1Start && slot1End ? `${d1}分` : "-";
+  slot2DurationEl.textContent = slot2Start && slot2End ? `${d2}分` : "-";
+  return d1 + d2;
+}
+
+function setSlotsEnabled(enabled) {
+  timeSlotsEl.querySelectorAll(".time-input").forEach((el) => {
+    el.disabled = !enabled;
+  });
+  timeSlotsEl.classList.toggle("disabled-look", !enabled);
+}
+
+function applyRecordToUI(record) {
+  eyeIndicatorEl.textContent = `パッチする目：${eyeLabel(record.eye || state.currentEye)}`;
+  applyTimeToInput(1, "start", record.slot1Start);
+  applyTimeToInput(1, "end", record.slot1End);
+  applyTimeToInput(2, "start", record.slot2Start);
+  applyTimeToInput(2, "end", record.slot2End);
+  updateSlotDurationTexts(record.slot1Start, record.slot1End, record.slot2Start, record.slot2End);
+
+  notDoneBtn.setAttribute("aria-pressed", record.notDone ? "true" : "false");
+  setSlotsEnabled(!record.notDone);
+
+  updateRing(record.minutes || 0, !!record.notDone);
 }
 
 let statusTimer = null;
@@ -182,7 +281,7 @@ function flashStatus(message) {
   saveStatus.textContent = message;
   if (statusTimer) clearTimeout(statusTimer);
   statusTimer = setTimeout(() => {
-    saveStatus.textContent = " ";
+    saveStatus.textContent = " ";
   }, 1800);
 }
 
@@ -194,32 +293,56 @@ async function loadDayView(dateKey) {
   backToTodayBtn.classList.toggle("hidden", isToday);
 
   const record = await getRecord(dateKey);
-  minutesInput.value = record.minutes || 0;
   memoInput.value = record.memo || "";
-  updateRing(record.minutes || 0);
-  saveStatus.textContent = " ";
+  applyRecordToUI(record);
+  saveStatus.textContent = " ";
 }
 
-async function addMinutes(delta) {
-  const current = await getRecord(state.currentEditDate);
-  const next = Math.max(0, (current.minutes || 0) + delta);
-  minutesInput.value = next;
-  await saveRecordPatch(state.currentEditDate, { minutes: next });
-  updateRing(next);
+async function onTimeInputChange() {
+  const slot1Start = readTimeFromInput(1, "start");
+  const slot1End = readTimeFromInput(1, "end");
+  const slot2Start = readTimeFromInput(2, "start");
+  const slot2End = readTimeFromInput(2, "end");
+  const total = updateSlotDurationTexts(slot1Start, slot1End, slot2Start, slot2End);
+
+  const updated = await saveRecordPatch(state.currentEditDate, {
+    slot1Start,
+    slot1End,
+    slot2Start,
+    slot2End,
+    minutes: total,
+    notDone: false,
+    eye: state.currentEye,
+  });
+  notDoneBtn.setAttribute("aria-pressed", "false");
+  setSlotsEnabled(true);
+  updateRing(updated.minutes, false);
   flashStatus("保存しました");
 }
 
-document.querySelectorAll(".btn-quick").forEach((btn) => {
-  btn.addEventListener("click", () => addMinutes(Number(btn.dataset.add)));
+timeSlotsEl.querySelectorAll(".time-input").forEach((el) => {
+  el.addEventListener("change", onTimeInputChange);
 });
 
-minutesInput.addEventListener("change", async () => {
-  let value = parseInt(minutesInput.value, 10);
-  if (isNaN(value) || value < 0) value = 0;
-  minutesInput.value = value;
-  await saveRecordPatch(state.currentEditDate, { minutes: value });
-  updateRing(value);
-  flashStatus("保存しました");
+notDoneBtn.addEventListener("click", async () => {
+  const current = await getRecord(state.currentEditDate);
+  const nextNotDone = !current.notDone;
+
+  const patch = nextNotDone
+    ? {
+        notDone: true,
+        slot1Start: null,
+        slot1End: null,
+        slot2Start: null,
+        slot2End: null,
+        minutes: 0,
+        eye: state.currentEye,
+      }
+    : { notDone: false };
+
+  const updated = await saveRecordPatch(state.currentEditDate, patch);
+  applyRecordToUI(updated);
+  flashStatus(nextNotDone ? "「未実施」として保存しました" : "記録の入力に戻りました");
 });
 
 memoInput.addEventListener("blur", async () => {
@@ -237,6 +360,18 @@ backToTodayBtn.addEventListener("click", () => {
 
 const calTitle = document.getElementById("cal-title");
 const calGrid = document.getElementById("calendar-grid");
+const periodStartInput = document.getElementById("period-start-input");
+const periodEndInput = document.getElementById("period-end-input");
+const periodTotalEl = document.getElementById("period-total");
+const periodAverageEl = document.getElementById("period-average");
+const periodWearDaysEl = document.getElementById("period-wear-days");
+const calendarEyeIndicatorEl = document.getElementById("calendar-eye-indicator");
+
+/** 1時間=1、15分刻み(0.25)で装着時間を表す文字列にする */
+function formatHoursLabel(minutes) {
+  const hours = Math.round(minutes / 60 / 0.25) * 0.25;
+  return String(hours);
+}
 
 document.getElementById("cal-prev").addEventListener("click", () => {
   state.calendarMonth -= 1;
@@ -259,6 +394,7 @@ document.getElementById("cal-next").addEventListener("click", () => {
 async function renderCalendar() {
   const { calendarYear, calendarMonth, dailyGoalMinutes } = state;
   calTitle.textContent = `${calendarYear}年${calendarMonth + 1}月`;
+  calendarEyeIndicatorEl.textContent = `パッチする目：${eyeLabel(state.currentEye)}`;
 
   const allRecords = await getAllRecords();
   const recordMap = new Map(allRecords.map((r) => [r.date, r]));
@@ -283,10 +419,23 @@ async function renderCalendar() {
       const d = new Date(calendarYear, calendarMonth, dayNum);
       const key = dateToKey(d);
       const record = recordMap.get(key);
-      cell.textContent = String(dayNum);
+
+      const dayNumEl = document.createElement("span");
+      dayNumEl.className = "cal-daynum";
+      dayNumEl.textContent = String(dayNum);
+      cell.appendChild(dayNumEl);
+
+      if (record && !record.notDone && (record.minutes || 0) > 0) {
+        const hoursEl = document.createElement("span");
+        hoursEl.className = "cal-hours";
+        hoursEl.textContent = formatHoursLabel(record.minutes);
+        cell.appendChild(hoursEl);
+      }
 
       if (record) {
-        if ((record.minutes || 0) >= dailyGoalMinutes) {
+        if (record.notDone) {
+          cell.classList.add("status-not-done");
+        } else if ((record.minutes || 0) >= dailyGoalMinutes) {
           cell.classList.add("status-achieved");
         } else {
           cell.classList.add("status-partial");
@@ -302,12 +451,50 @@ async function renderCalendar() {
     }
     calGrid.appendChild(cell);
   }
+
+  periodStartInput.value = state.periodStart;
+  periodEndInput.value = state.periodEnd;
+  renderPeriodSummary(allRecords);
 }
+
+function renderPeriodSummary(recordsCache) {
+  const rangeStart = state.periodStart < state.periodEnd ? state.periodStart : state.periodEnd;
+  const rangeEnd = state.periodStart < state.periodEnd ? state.periodEnd : state.periodStart;
+
+  const dayCount =
+    Math.round((keyToDate(rangeEnd) - keyToDate(rangeStart)) / 86400000) + 1;
+
+  const recordsInRange = recordsCache.filter((r) => r.date >= rangeStart && r.date <= rangeEnd);
+
+  const total = recordsInRange.reduce((sum, r) => sum + (r.minutes || 0), 0);
+  const average = dayCount > 0 ? total / dayCount : 0;
+  const wearDays = recordsInRange.filter((r) => !r.notDone && (r.minutes || 0) > 0).length;
+
+  periodTotalEl.textContent = `${total}分`;
+  periodAverageEl.textContent = `${average.toFixed(1)}分/日`;
+  periodWearDaysEl.textContent = `${wearDays}日 / ${dayCount}日`;
+}
+
+async function updatePeriodSummaryOnly() {
+  const allRecords = await getAllRecords();
+  renderPeriodSummary(allRecords);
+}
+
+periodStartInput.addEventListener("change", () => {
+  if (periodStartInput.value) state.periodStart = periodStartInput.value;
+  updatePeriodSummaryOnly();
+});
+
+periodEndInput.addEventListener("change", () => {
+  if (periodEndInput.value) state.periodEnd = periodEndInput.value;
+  updatePeriodSummaryOnly();
+});
 
 /* ==========================================================
    設定画面
    ========================================================== */
 
+const eyeToggleButtons = document.querySelectorAll(".eye-toggle-btn");
 const goalInput = document.getElementById("goal-input");
 const goalSaveBtn = document.getElementById("goal-save-btn");
 const exportBtn = document.getElementById("export-btn");
@@ -315,13 +502,31 @@ const importBtn = document.getElementById("import-btn");
 const importFile = document.getElementById("import-file");
 const backupStatus = document.getElementById("backup-status");
 
+function updateEyeToggleUI() {
+  eyeToggleButtons.forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.eye === state.currentEye);
+  });
+}
+
+eyeToggleButtons.forEach((btn) => {
+  btn.addEventListener("click", async () => {
+    state.currentEye = btn.dataset.eye;
+    await setSetting("currentEye", state.currentEye);
+    updateEyeToggleUI();
+    const rec = await getRecord(state.currentEditDate);
+    eyeIndicatorEl.textContent = `パッチする目：${eyeLabel(rec.eye || state.currentEye)}`;
+    flashBackupStatus("パッチする目を保存しました");
+  });
+});
+
 goalSaveBtn.addEventListener("click", async () => {
   let value = parseInt(goalInput.value, 10);
   if (isNaN(value) || value < 1) value = DEFAULT_GOAL_MINUTES;
   goalInput.value = value;
   state.dailyGoalMinutes = value;
   await setSetting("dailyGoalMinutes", value);
-  updateRing(Number(minutesInput.value) || 0);
+  const rec = await getRecord(state.currentEditDate);
+  updateRing(rec.minutes || 0, !!rec.notDone);
   flashBackupStatus("目標を保存しました");
 });
 
@@ -330,7 +535,7 @@ function flashBackupStatus(message) {
   backupStatus.textContent = message;
   if (backupStatusTimer) clearTimeout(backupStatusTimer);
   backupStatusTimer = setTimeout(() => {
-    backupStatus.textContent = " ";
+    backupStatus.textContent = " ";
   }, 2200);
 }
 
@@ -338,8 +543,8 @@ exportBtn.addEventListener("click", async () => {
   const records = await getAllRecords();
   const data = {
     exportedAt: new Date().toISOString(),
-    version: 1,
-    settings: { dailyGoalMinutes: state.dailyGoalMinutes },
+    version: 2,
+    settings: { dailyGoalMinutes: state.dailyGoalMinutes, currentEye: state.currentEye },
     records: records.sort((a, b) => (a.date < b.date ? -1 : 1)),
   };
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
@@ -380,7 +585,13 @@ importFile.addEventListener("change", async () => {
       if (!r || typeof r.date !== "string") continue;
       await putRecord({
         date: r.date,
+        slot1Start: typeof r.slot1Start === "string" ? r.slot1Start : null,
+        slot1End: typeof r.slot1End === "string" ? r.slot1End : null,
+        slot2Start: typeof r.slot2Start === "string" ? r.slot2Start : null,
+        slot2End: typeof r.slot2End === "string" ? r.slot2End : null,
         minutes: Number(r.minutes) || 0,
+        notDone: !!r.notDone,
+        eye: r.eye === "left" ? "left" : r.eye === "right" ? "right" : null,
         memo: typeof r.memo === "string" ? r.memo : "",
         updatedAt: r.updatedAt || new Date().toISOString(),
       });
@@ -390,6 +601,11 @@ importFile.addEventListener("change", async () => {
       state.dailyGoalMinutes = Number(data.settings.dailyGoalMinutes);
       await setSetting("dailyGoalMinutes", state.dailyGoalMinutes);
       goalInput.value = state.dailyGoalMinutes;
+    }
+    if (data.settings && (data.settings.currentEye === "left" || data.settings.currentEye === "right")) {
+      state.currentEye = data.settings.currentEye;
+      await setSetting("currentEye", state.currentEye);
+      updateEyeToggleUI();
     }
 
     await loadDayView(state.currentEditDate);
@@ -406,6 +622,8 @@ importFile.addEventListener("change", async () => {
 async function init() {
   state.dailyGoalMinutes = await getSetting("dailyGoalMinutes", DEFAULT_GOAL_MINUTES);
   goalInput.value = state.dailyGoalMinutes;
+  state.currentEye = await getSetting("currentEye", DEFAULT_EYE);
+  updateEyeToggleUI();
   await loadDayView(todayKey());
 
   if ("serviceWorker" in navigator) {

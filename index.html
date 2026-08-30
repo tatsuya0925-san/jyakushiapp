@@ -13,11 +13,15 @@
 <body>
 <div id="app">
 
+  <header class="app-header">
+    <h1 class="app-title">アイパッチトレーニング記録</h1>
+  </header>
+
   <main>
     <!-- 記録画面（今日 / カレンダーから選んだ日） -->
     <section id="view-day" class="view active">
       <div class="day-header">
-        <h1 id="day-date-label">-</h1>
+        <h2 id="day-date-label">-</h2>
         <button id="back-to-today-btn" class="btn-link hidden">今日に戻る</button>
       </div>
 
@@ -33,14 +37,40 @@
         </div>
       </div>
 
-      <div class="field-block">
-        <label for="minutes-input">アイパッチ装着時間（分）</label>
-        <input type="number" id="minutes-input" inputmode="numeric" min="0" step="1" />
-      </div>
+      <div class="eye-indicator" id="eye-indicator">パッチする目：右目</div>
 
-      <div class="quick-buttons">
-        <button type="button" class="btn-quick" data-add="15">+15分</button>
-        <button type="button" class="btn-quick" data-add="30">+30分</button>
+      <div id="time-slots" class="time-slots">
+        <div class="slot-block">
+          <div class="slot-title">1回目</div>
+          <div class="time-row">
+            <div class="time-field">
+              <label for="time-1-start">開始</label>
+              <input type="time" class="time-input" id="time-1-start" data-slot="1" data-edge="start" />
+            </div>
+            <span class="time-sep">〜</span>
+            <div class="time-field">
+              <label for="time-1-end">終了</label>
+              <input type="time" class="time-input" id="time-1-end" data-slot="1" data-edge="end" />
+            </div>
+          </div>
+          <div class="slot-duration" id="slot1-duration">－</div>
+        </div>
+
+        <div class="slot-block">
+          <div class="slot-title">2回目（つけ直した場合）</div>
+          <div class="time-row">
+            <div class="time-field">
+              <label for="time-2-start">開始</label>
+              <input type="time" class="time-input" id="time-2-start" data-slot="2" data-edge="start" />
+            </div>
+            <span class="time-sep">〜</span>
+            <div class="time-field">
+              <label for="time-2-end">終了</label>
+              <input type="time" class="time-input" id="time-2-end" data-slot="2" data-edge="end" />
+            </div>
+          </div>
+          <div class="slot-duration" id="slot2-duration">－</div>
+        </div>
       </div>
 
       <div class="field-block">
@@ -48,11 +78,17 @@
         <textarea id="memo-input" rows="3" placeholder="例：テレビを見ながら"></textarea>
       </div>
 
+      <button type="button" id="not-done-btn" class="btn-not-done" aria-pressed="false">
+        アイパッチ未実施
+      </button>
+
       <p id="save-status" class="save-status" aria-live="polite">&nbsp;</p>
     </section>
 
     <!-- カレンダー画面 -->
     <section id="view-calendar" class="view">
+      <div class="eye-indicator" id="calendar-eye-indicator">パッチする目：右目</div>
+
       <div class="calendar-header">
         <button id="cal-prev" class="btn-icon" aria-label="前の月">←</button>
         <h2 id="cal-title">-</h2>
@@ -65,13 +101,53 @@
       <div class="legend">
         <span class="legend-item"><span class="legend-dot dot-achieved"></span>目標達成</span>
         <span class="legend-item"><span class="legend-dot dot-partial"></span>記録あり</span>
+        <span class="legend-item"><span class="legend-dot dot-not-done"></span>未実施</span>
         <span class="legend-item"><span class="legend-dot dot-none"></span>記録なし</span>
+      </div>
+      <p class="legend-note">日付の右下の数字は、その日の装着時間です（1時間を1として0.25刻みで表示）。</p>
+
+      <div class="period-panel">
+        <h3>集計期間</h3>
+        <p class="period-hint">前回の眼科受診日〜次回の受診日など、好きな期間を指定できます。初期値はカレンダーに表示中の月の1日〜末日です。</p>
+        <div class="period-range-row">
+          <div class="period-field">
+            <label for="period-start-input">開始日</label>
+            <input type="date" id="period-start-input" />
+          </div>
+          <span class="period-sep">〜</span>
+          <div class="period-field">
+            <label for="period-end-input">終了日</label>
+            <input type="date" id="period-end-input" />
+          </div>
+        </div>
+        <div class="period-summary">
+          <div class="period-summary-item">
+            <div class="period-summary-label">合計装着時間</div>
+            <div class="period-summary-value" id="period-total">0分</div>
+          </div>
+          <div class="period-summary-item">
+            <div class="period-summary-label">平均装着時間（1日あたり）</div>
+            <div class="period-summary-value" id="period-average">0分/日</div>
+          </div>
+        </div>
+        <div class="period-summary-item period-summary-wide">
+          <div class="period-summary-label">装着した日数</div>
+          <div class="period-summary-value" id="period-wear-days">0日 / 0日</div>
+        </div>
       </div>
     </section>
 
     <!-- 設定画面 -->
     <section id="view-settings" class="view">
       <h2>設定</h2>
+
+      <div class="field-block">
+        <label>アイパッチをつける目</label>
+        <div class="eye-toggle" id="eye-toggle">
+          <button type="button" class="eye-toggle-btn" data-eye="right">右目</button>
+          <button type="button" class="eye-toggle-btn" data-eye="left">左目</button>
+        </div>
+      </div>
 
       <div class="field-block">
         <label for="goal-input">1日の目標時間（分）</label>
