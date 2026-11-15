@@ -16,6 +16,9 @@
   <header class="app-header">
     <h1 class="app-title">アイパッチトレーニング記録</h1>
     <p class="sync-badge" id="sync-badge">同期状況を確認中…</p>
+    <button type="button" id="update-banner" class="banner banner-update hidden">新しいバージョンになりました。ここをタップして更新してください</button>
+    <p id="readonly-banner" class="banner banner-warn hidden">この端末のアプリは古いため、データを守るために保存を止めています。アプリを開き直してください。</p>
+    <p id="backup-reminder" class="banner banner-note hidden">バックアップを書き出してから30日以上たっています。設定画面から書き出しておくと安心です。</p>
   </header>
 
   <main>
@@ -105,20 +108,21 @@
         <span class="legend-item"><span class="legend-dot dot-not-done"></span>未実施</span>
         <span class="legend-item"><span class="legend-dot dot-none"></span>記録なし</span>
       </div>
-      <p class="legend-note">日付の右下の数字は、その日の装着時間です（1時間を1として0.25刻みで表示）。</p>
+      <p class="legend-note">日付の右下の数字は、その日の装着時間です（1時間を1として0.25刻みで表示）。右上の「診」は診察日です。</p>
 
       <div class="period-panel">
         <h3>集計期間</h3>
-        <p class="period-hint">前回の眼科受診日〜次回の受診日など、好きな期間を指定できます。初期値はカレンダーに表示中の月の1日〜末日です。</p>
+        <p class="period-hint">前回の眼科受診日〜次回の受診日など、好きな期間を指定できます。初期値はカレンダーに表示中の月の1日〜末日です。この期間は「分析」画面と共通です。</p>
+        <div class="period-presets"></div>
         <div class="period-range-row">
           <div class="period-field">
-            <label for="period-start-input">開始日</label>
-            <input type="date" id="period-start-input" />
+            <label>開始日</label>
+            <input type="date" class="js-period-start" />
           </div>
           <span class="period-sep">〜</span>
           <div class="period-field">
-            <label for="period-end-input">終了日</label>
-            <input type="date" id="period-end-input" />
+            <label>終了日</label>
+            <input type="date" class="js-period-end" />
           </div>
         </div>
         <div class="period-summary">
@@ -135,7 +139,102 @@
           <div class="period-summary-label">装着した日数</div>
           <div class="period-summary-value" id="period-wear-days">0日 / 0日</div>
         </div>
+        <p class="period-hint" id="period-note"></p>
       </div>
+    </section>
+
+    <!-- 分析画面 -->
+    <section id="view-analysis" class="view">
+      <h2>分析</h2>
+
+      <div class="period-panel period-panel-top">
+        <h3>集計期間</h3>
+        <div class="period-presets"></div>
+        <div class="period-range-row">
+          <div class="period-field">
+            <label>開始日</label>
+            <input type="date" class="js-period-start" />
+          </div>
+          <span class="period-sep">〜</span>
+          <div class="period-field">
+            <label>終了日</label>
+            <input type="date" class="js-period-end" />
+          </div>
+        </div>
+        <p class="period-hint" id="analysis-period-note"></p>
+      </div>
+
+      <div id="analysis-body"></div>
+
+      <div class="analysis-actions">
+        <button type="button" id="report-open-btn" class="btn-primary">医師に見せる用紙を作る（印刷／PDF）</button>
+        <button type="button" id="period-csv-btn" class="btn-secondary">この期間の記録をCSVで書き出す（Excel用）</button>
+      </div>
+    </section>
+
+    <!-- 診察記録画面 -->
+    <section id="view-exams" class="view">
+      <h2>診察記録</h2>
+      <p id="exam-next-visit" class="exam-next-visit"></p>
+      <button type="button" id="exam-add-btn" class="btn-primary">診察記録を追加</button>
+
+      <div id="exam-form-wrap" class="exam-form hidden">
+        <h3 id="exam-form-title">診察記録を追加</h3>
+
+        <div class="field-block">
+          <label for="exam-date">診察日</label>
+          <input type="date" id="exam-date" />
+        </div>
+
+        <div class="exam-eye-group">
+          <div class="exam-eye-title">右目の視力</div>
+          <div class="exam-select-row">
+            <div class="exam-select-field">
+              <label for="exam-right-naked">裸眼</label>
+              <select id="exam-right-naked"></select>
+            </div>
+            <div class="exam-select-field">
+              <label for="exam-right-glasses">眼鏡あり</label>
+              <select id="exam-right-glasses"></select>
+            </div>
+          </div>
+        </div>
+
+        <div class="exam-eye-group">
+          <div class="exam-eye-title">左目の視力</div>
+          <div class="exam-select-row">
+            <div class="exam-select-field">
+              <label for="exam-left-naked">裸眼</label>
+              <select id="exam-left-naked"></select>
+            </div>
+            <div class="exam-select-field">
+              <label for="exam-left-glasses">眼鏡あり</label>
+              <select id="exam-left-glasses"></select>
+            </div>
+          </div>
+        </div>
+        <p class="settings-note">測定しなかった項目は「未測定」のままにしてください。グラフでは前回測定した値を引き継いで表示します。</p>
+
+        <div class="field-block">
+          <label for="exam-comment">診察時のコメント（備考）</label>
+          <textarea id="exam-comment" rows="4" placeholder="例：眼鏡の度数を変更。パッチは今まで通り2時間。"></textarea>
+        </div>
+
+        <div class="field-block">
+          <label for="exam-next-date">次回の診察予定日（任意）</label>
+          <input type="date" id="exam-next-date" />
+        </div>
+
+        <p id="exam-form-status" class="save-status exam-form-status" aria-live="polite">&nbsp;</p>
+        <button type="button" id="exam-save-btn" class="btn-primary">保存する</button>
+        <button type="button" id="exam-cancel-btn" class="btn-secondary">キャンセル</button>
+        <button type="button" id="exam-delete-btn" class="btn-danger hidden">この診察記録を削除</button>
+      </div>
+
+      <div id="exam-list"></div>
+
+      <h3 class="exam-chart-title">視力の推移</h3>
+      <div id="exam-chart"></div>
     </section>
 
     <!-- 設定画面 -->
@@ -168,14 +267,49 @@
       </div>
       <button id="goal-save-btn" class="btn-primary">目標を保存</button>
 
+      <div class="field-block">
+        <label for="child-name-input">お子さまのお名前（任意・印刷用紙に載せます）</label>
+        <input type="text" id="child-name-input" maxlength="30" autocomplete="off" />
+      </div>
+      <button id="child-name-save-btn" class="btn-primary">お名前を保存</button>
+
+      <hr />
+
+      <h2>データの書き出し</h2>
+      <p class="settings-note">Excelなどで開けるCSVファイルに書き出せます。集計期間を指定した書き出しは「分析」画面にあります。</p>
+      <button id="csv-all-btn" class="btn-secondary">全期間の記録をCSVで書き出す</button>
+      <button id="csv-exams-btn" class="btn-secondary">診察記録をCSVで書き出す</button>
+
       <hr />
 
       <h2>バックアップ</h2>
-      <p class="settings-note">記録は共有コードごとにクラウド（Firebase）に保存されています。念のため、ときどきファイルに書き出して保存しておくことをおすすめします。</p>
+      <p class="settings-note">記録は共有コードごとにクラウド（Firebase）に保存されています。念のため、ときどきファイルに書き出して保存しておくことをおすすめします（記録・診察記録・設定がすべて入ります）。</p>
       <button id="export-btn" class="btn-secondary">JSONファイルに書き出す</button>
       <button id="import-btn" class="btn-secondary">JSONファイルから読み込む</button>
       <input type="file" id="import-file" accept="application/json,.json" class="hidden" />
+      <p id="last-backup-text" class="settings-note"></p>
       <p id="backup-status" class="save-status" aria-live="polite">&nbsp;</p>
+
+      <hr />
+
+      <h2>アプリの情報</h2>
+      <p id="app-version-text" class="settings-note"></p>
+      <p id="data-status-text" class="settings-note"></p>
+    </section>
+
+    <!-- 印刷用紙の画面（医師に見せる用） -->
+    <section id="view-report" class="view">
+      <div class="report-toolbar">
+        <button type="button" id="report-back-btn" class="btn-secondary">戻る</button>
+        <button type="button" id="report-print-btn" class="btn-primary">印刷／PDFに保存</button>
+      </div>
+      <p class="report-hint">A4横・白黒で印刷できます。1ページ目は、今お使いの「アイパッチ日記」の紙と同じ形です。印刷画面で「PDFに保存」を選ぶと、PDFにもできます。期間は、カレンダー／分析画面で選んだ期間です。</p>
+      <div class="report-options">
+        <label><input type="checkbox" id="rp-opt-charts" checked /> 分析のグラフを付ける</label>
+        <label><input type="checkbox" id="rp-opt-exams" checked /> 診察記録と視力のグラフを付ける</label>
+        <label><input type="checkbox" id="rp-opt-details" /> 日ごとの詳細（時間帯・メモ）を付ける</label>
+      </div>
+      <div id="report-sheet" class="report-sheet"></div>
     </section>
   </main>
 
@@ -185,6 +319,12 @@
     </button>
     <button type="button" class="nav-btn" data-view="calendar">
       <span class="nav-icon">📅</span><span class="nav-text">カレンダー</span>
+    </button>
+    <button type="button" class="nav-btn" data-view="analysis">
+      <span class="nav-icon">📊</span><span class="nav-text">分析</span>
+    </button>
+    <button type="button" class="nav-btn" data-view="exams">
+      <span class="nav-icon">🩺</span><span class="nav-text">診察</span>
     </button>
     <button type="button" class="nav-btn" data-view="settings">
       <span class="nav-icon">⚙️</span><span class="nav-text">設定</span>
@@ -197,5 +337,8 @@
 <script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <script src="firebase-config.js"></script>
 <script src="app.js"></script>
+<script src="analysis.js"></script>
+<script src="exams.js"></script>
+<script src="report.js"></script>
 </body>
 </html>

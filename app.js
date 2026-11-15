@@ -1,7 +1,66 @@
 "use strict";
 
+/* ==========================================================
+   バージョン情報
+   - APP_VERSION        : アプリの版数（画面に表示。更新のたびに上げる）
+   - DATA_SCHEMA_VERSION: データ形式の版数（データの形を変えたときだけ上げる）
+       1 = 記録・設定のみ（旧バージョン 1.x）
+       2 = 診察記録を追加（2.0.0）。既存の記録の形は変えていない
+   ========================================================== */
+
+const APP_VERSION = "2.0.0";
+const DATA_SCHEMA_VERSION = 2;
+
 const DEFAULT_GOAL_MINUTES = 120;
 const DEFAULT_EYE = "right";
+const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"];
+
+const LAST_BACKUP_KEY = "amblyopiaLastBackupAt";
+const FIRST_SEEN_KEY = "amblyopiaFirstSeenAt";
+const BACKUP_REMINDER_DAYS = 30;
+
+/** 視力プルダウンの選択肢（value が null のものは「未測定」） */
+const ACUITY_OPTIONS = (() => {
+  const list = [
+    { value: null, label: "未測定" },
+    { value: 0.05, label: "0.1未満" },
+  ];
+  for (let i = 1; i <= 10; i++) list.push({ value: i / 10, label: (i / 10).toFixed(1) });
+  list.push({ value: 1.2, label: "1.2" });
+  list.push({ value: 1.5, label: "1.5" });
+  list.push({ value: 2.0, label: "2.0" });
+  return list;
+})();
+
+function acuityLabel(value) {
+  if (value === null || value === undefined) return "未測定";
+  const found = ACUITY_OPTIONS.find((o) => o.value === value);
+  return found ? found.label : String(value);
+}
+
+function lsGet(key) {
+  try {
+    return localStorage.getItem(key);
+  } catch (e) {
+    return null;
+  }
+}
+
+function lsSet(key, value) {
+  try {
+    localStorage.setItem(key, value);
+  } catch (e) {
+    /* 保存できなくてもアプリは動く */
+  }
+}
+
+function escapeHtml(text) {
+  return String(text == null ? "" : text)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
 
 /* ==========================================================
    共有コード（世帯コード）の管理
@@ -29,17 +88,17 @@ function normalizeHouseholdCode(code) {
 }
 
 function loadHouseholdCode() {
-  let code = localStorage.getItem(HOUSEHOLD_CODE_STORAGE_KEY);
+  let code = lsGet(HOUSEHOLD_CODE_STORAGE_KEY);
   if (!code) {
     code = generateHouseholdCode();
-    localStorage.setItem(HOUSEHOLD_CODE_STORAGE_KEY, code);
+    lsSet(HOUSEHOLD_CODE_STORAGE_KEY, code);
   }
   return code;
 }
 
 function saveHouseholdCode(code) {
   const normalized = normalizeHouseholdCode(code);
-  localStorage.setItem(HOUSEHOLD_CODE_STORAGE_KEY, normalized);
+  lsSet(HOUSEHOLD_CODE_STORAGE_KEY, normalized);
   return normalized;
 }
 
@@ -62,15 +121,43 @@ function recordsCol() {
   return householdDoc().collection("records");
 }
 
+function examsCol() {
+  return householdDoc().collection("exams");
+}
+
 function settingsDocRef() {
   return householdDoc().collection("settings").doc("app");
 }
 
+/** データ形式のバージョンを書いておく場所（旧バージョンのアプリは読まないので影響しない） */
+function metaDocRef() {
+  return householdDoc().collection("settings").doc("meta");
+}
+
 const recordsCache = new Map();
-const settingsCache = { dailyGoalMinutes: DEFAULT_GOAL_MINUTES, currentEye: DEFAULT_EYE };
+const examsCache = new Map();
+const settingsCache = { dailyGoalMinutes: DEFAULT_GOAL_MINUTES, currentEye: DEFAULT_EYE, childName: "" };
+let metaCache = {};
 
 let unsubscribeRecords = null;
 let unsubscribeSettings = null;
+let unsubscribeExams = null;
+let unsubscribeMeta = null;
+
+/** データがこのアプリより新しい形式のときは true。誤って壊さないよう書き込みを止める */
+let readOnlyMode = false;
+let readOnlyAlerted = false;
+
+function guardWrite() {
+  if (!readOnlyMode) return true;
+  if (!readOnlyAlerted) {
+    readOnlyAlerted = true;
+    window.alert(
+      "この端末のアプリが古いため、データを守るために保存を止めています。\nアプリを閉じて開き直すか、ページを再読み込みして新しい版にしてください。"
+    );
+  }
+  return false;
+}
 
 function emptyRecord(date) {
   return {
@@ -91,17 +178,19 @@ function eyeLabel(eye) {
   return eye === "left" ? "左目" : "右目";
 }
 
-/** レコード／設定のリアルタイム購読を開始し、最初の1回分のデータが届くまで待つ */
+/** 記録・診察記録・設定・バージョン情報のリアルタイム購読を開始し、最初のデータが届くまで待つ */
 function attachListeners() {
   if (unsubscribeRecords) unsubscribeRecords();
   if (unsubscribeSettings) unsubscribeSettings();
+  if (unsubscribeExams) unsubscribeExams();
+  if (unsubscribeMeta) unsubscribeMeta();
   recordsCache.clear();
+  examsCache.clear();
 
   return new Promise((resolve) => {
-    let recordsReady = false;
-    let settingsReady = false;
-    const maybeResolve = () => {
-      if (recordsReady && settingsReady) resolve();
+    const pending = new Set(["records", "settings", "exams", "meta"]);
+    const done = (name) => {
+      if (pending.delete(name) && pending.size === 0) resolve();
     };
 
     unsubscribeRecords = recordsCol().onSnapshot(
@@ -114,19 +203,28 @@ function attachListeners() {
           }
         });
         setSyncStatus(!snapshot.metadata.fromCache);
-        if (!recordsReady) {
-          recordsReady = true;
-          maybeResolve();
-        }
+        done("records");
         onRemoteDataChanged();
       },
       () => {
         setSyncStatus(false);
-        if (!recordsReady) {
-          recordsReady = true;
-          maybeResolve();
-        }
+        done("records");
       }
+    );
+
+    unsubscribeExams = examsCol().onSnapshot(
+      (snapshot) => {
+        snapshot.docChanges().forEach((change) => {
+          if (change.type === "removed") {
+            examsCache.delete(change.doc.id);
+          } else {
+            examsCache.set(change.doc.id, Object.assign({}, change.doc.data(), { id: change.doc.id }));
+          }
+        });
+        done("exams");
+        onRemoteDataChanged();
+      },
+      () => done("exams")
     );
 
     unsubscribeSettings = settingsDocRef().onSnapshot(
@@ -134,33 +232,41 @@ function attachListeners() {
         const data = snap.data() || {};
         if (typeof data.dailyGoalMinutes === "number") settingsCache.dailyGoalMinutes = data.dailyGoalMinutes;
         if (data.currentEye === "left" || data.currentEye === "right") settingsCache.currentEye = data.currentEye;
+        if (typeof data.childName === "string") settingsCache.childName = data.childName;
         state.dailyGoalMinutes = settingsCache.dailyGoalMinutes;
         state.currentEye = settingsCache.currentEye;
         goalInput.value = state.dailyGoalMinutes;
+        if (document.activeElement !== childNameInput) childNameInput.value = settingsCache.childName;
         updateEyeToggleUI();
-        if (!settingsReady) {
-          settingsReady = true;
-          maybeResolve();
-        }
+        done("settings");
         onRemoteDataChanged();
       },
-      () => {
-        if (!settingsReady) {
-          settingsReady = true;
-          maybeResolve();
-        }
-      }
+      () => done("settings")
+    );
+
+    unsubscribeMeta = metaDocRef().onSnapshot(
+      (snap) => {
+        metaCache = snap.data() || {};
+        const dataVersion = typeof metaCache.schemaVersion === "number" ? metaCache.schemaVersion : 1;
+        readOnlyMode = dataVersion > DATA_SCHEMA_VERSION;
+        updateReadOnlyBanner();
+        done("meta");
+      },
+      () => done("meta")
     );
   });
 }
 
+/** 今開いている画面を、最新のデータで描き直す */
 function onRemoteDataChanged() {
   const activeBtn = document.querySelector(".nav-btn.active");
-  const activeView = activeBtn ? activeBtn.dataset.view : "day";
+  const activeView = activeBtn ? activeBtn.dataset.view : null;
   if (activeView === "day") {
     refreshDayViewFromCache();
-  } else if (activeView === "calendar") {
-    renderCalendar();
+  } else if (activeView && viewRenderers[activeView]) {
+    viewRenderers[activeView]();
+  } else if (document.body.classList.contains("report-open") && viewRenderers.report) {
+    viewRenderers.report();
   }
 }
 
@@ -172,13 +278,33 @@ async function refreshDayViewFromCache() {
   applyRecordToUI(record);
 }
 
-/* ---- データ読み書き（recordsCache 経由。onSnapshot が裏で同期を保つ） ---- */
+/** 旧バージョンのデータでも新バージョンでも、データ形式の目印を最新にしておく（下げることはしない） */
+async function ensureSchemaMarker() {
+  if (readOnlyMode || !db) return;
+  const current = typeof metaCache.schemaVersion === "number" ? metaCache.schemaVersion : 1;
+  if (current >= DATA_SCHEMA_VERSION) return;
+  try {
+    await metaDocRef().set(
+      {
+        schemaVersion: DATA_SCHEMA_VERSION,
+        upgradedByAppVersion: APP_VERSION,
+        upgradedAt: new Date().toISOString(),
+      },
+      { merge: true }
+    );
+  } catch (err) {
+    /* オフラインなどで書けなくても、次の起動時にもう一度試す */
+  }
+}
+
+/* ---- データ読み書き（キャッシュ経由。onSnapshot が裏で同期を保つ） ---- */
 
 async function getRecord(date) {
   return recordsCache.get(date) || emptyRecord(date);
 }
 
 async function putRecord(record) {
+  if (!guardWrite()) return;
   await recordsCol().doc(record.date).set(record);
 }
 
@@ -186,16 +312,8 @@ async function getAllRecords() {
   return [...recordsCache.values()];
 }
 
-async function clearRecords() {
-  const snap = await recordsCol().get();
-  const docs = snap.docs;
-  const chunkSize = 450;
-  for (let i = 0; i < docs.length; i += chunkSize) {
-    const batch = db.batch();
-    docs.slice(i, i + chunkSize).forEach((d) => batch.delete(d.ref));
-    await batch.commit();
-  }
-  recordsCache.clear();
+function getAllExams() {
+  return [...examsCache.values()].sort((a, b) => (a.date < b.date ? -1 : a.date > b.date ? 1 : 0));
 }
 
 async function getSetting(key, defaultValue) {
@@ -203,6 +321,7 @@ async function getSetting(key, defaultValue) {
 }
 
 async function setSetting(key, value) {
+  if (!guardWrite()) return;
   settingsCache[key] = value;
   await settingsDocRef().set({ [key]: value }, { merge: true });
 }
@@ -212,12 +331,74 @@ async function setSetting(key, value) {
  * （一部の項目だけ更新しても、他の項目を消さないため）
  */
 async function saveRecordPatch(date, patch) {
+  if (!guardWrite()) return recordsCache.get(date) || emptyRecord(date);
   const fullPatch = Object.assign({}, patch, { date, updatedAt: new Date().toISOString() });
   await recordsCol().doc(date).set(fullPatch, { merge: true });
   const current = recordsCache.get(date) || emptyRecord(date);
   const updated = Object.assign({}, current, fullPatch);
   recordsCache.set(date, updated);
   return updated;
+}
+
+/**
+ * コレクションの中身を「渡した内容」にそろえる。
+ * 先に新しい内容を書き込み、そのあとで余分なものを消す（途中で失敗しても、元のデータが空になりにくい順番）
+ * items: [{ id, data }]
+ */
+async function replaceAllDocs(colRef, items) {
+  const chunkSize = 450;
+  const keep = new Set(items.map((it) => it.id));
+  for (let i = 0; i < items.length; i += chunkSize) {
+    const batch = db.batch();
+    items.slice(i, i + chunkSize).forEach((it) => batch.set(colRef.doc(it.id), it.data));
+    await batch.commit();
+  }
+  const snap = await colRef.get();
+  const stale = snap.docs.filter((d) => !keep.has(d.id));
+  for (let i = 0; i < stale.length; i += chunkSize) {
+    const batch = db.batch();
+    stale.slice(i, i + chunkSize).forEach((d) => batch.delete(d.ref));
+    await batch.commit();
+  }
+}
+
+/* ---- 読み込み時の整形（変なデータが混ざっても落ちないように） ---- */
+
+function sanitizeRecord(r) {
+  return {
+    date: r.date,
+    slot1Start: typeof r.slot1Start === "string" ? r.slot1Start : null,
+    slot1End: typeof r.slot1End === "string" ? r.slot1End : null,
+    slot2Start: typeof r.slot2Start === "string" ? r.slot2Start : null,
+    slot2End: typeof r.slot2End === "string" ? r.slot2End : null,
+    minutes: Number(r.minutes) || 0,
+    notDone: !!r.notDone,
+    eye: r.eye === "left" ? "left" : r.eye === "right" ? "right" : null,
+    memo: typeof r.memo === "string" ? r.memo : "",
+    updatedAt: r.updatedAt || new Date().toISOString(),
+  };
+}
+
+function sanitizeAcuity(v) {
+  if (v === null || v === undefined || v === "") return null;
+  const n = Number(v);
+  if (!isFinite(n) || n <= 0 || n > 2.5) return null;
+  return Math.round(n * 100) / 100;
+}
+
+const DATE_KEY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+
+function sanitizeExam(e) {
+  return {
+    date: e.date,
+    nextVisitDate: typeof e.nextVisitDate === "string" && DATE_KEY_PATTERN.test(e.nextVisitDate) ? e.nextVisitDate : null,
+    rightNaked: sanitizeAcuity(e.rightNaked),
+    rightGlasses: sanitizeAcuity(e.rightGlasses),
+    leftNaked: sanitizeAcuity(e.leftNaked),
+    leftGlasses: sanitizeAcuity(e.leftGlasses),
+    comment: typeof e.comment === "string" ? e.comment : "",
+    updatedAt: e.updatedAt || new Date().toISOString(),
+  };
 }
 
 /* ==========================================================
@@ -237,9 +418,24 @@ function keyToDate(key) {
   return new Date(y, m - 1, d);
 }
 
+function addDays(key, n) {
+  const d = keyToDate(key);
+  d.setDate(d.getDate() + n);
+  return dateToKey(d);
+}
+
+/** b - a の日数（keyどうし） */
+function diffDays(a, b) {
+  return Math.round((keyToDate(b) - keyToDate(a)) / 86400000);
+}
+
 function formatDateLabel(d) {
-  const weekdays = ["日", "月", "火", "水", "木", "金", "土"];
-  return `${d.getMonth() + 1}月${d.getDate()}日（${weekdays[d.getDay()]}）`;
+  return `${d.getMonth() + 1}月${d.getDate()}日（${WEEKDAYS[d.getDay()]}）`;
+}
+
+function formatDateJa(key) {
+  const d = keyToDate(key);
+  return `${d.getFullYear()}年${d.getMonth() + 1}月${d.getDate()}日（${WEEKDAYS[d.getDay()]}）`;
 }
 
 function todayKey() {
@@ -271,10 +467,13 @@ const state = {
 const RING_CIRCUMFERENCE = 2 * Math.PI * 52;
 
 /* ==========================================================
-   同期状態バッジ
+   お知らせバナー（同期状態・更新・バックアップ・読み取り専用）
    ========================================================== */
 
 const syncBadgeEl = document.getElementById("sync-badge");
+const updateBannerEl = document.getElementById("update-banner");
+const readOnlyBannerEl = document.getElementById("readonly-banner");
+const backupReminderEl = document.getElementById("backup-reminder");
 
 function setSyncStatus(online) {
   if (!syncBadgeEl) return;
@@ -284,6 +483,31 @@ function setSyncStatus(online) {
   syncBadgeEl.classList.toggle("sync-offline", !online);
 }
 
+function updateReadOnlyBanner() {
+  if (readOnlyBannerEl) readOnlyBannerEl.classList.toggle("hidden", !readOnlyMode);
+}
+
+function showUpdateBanner() {
+  if (updateBannerEl) updateBannerEl.classList.remove("hidden");
+}
+
+function daysSinceLastBackup() {
+  const base = lsGet(LAST_BACKUP_KEY) || lsGet(FIRST_SEEN_KEY);
+  if (!base) return 0;
+  const t = new Date(base).getTime();
+  if (isNaN(t)) return 0;
+  return Math.floor((Date.now() - t) / 86400000);
+}
+
+function updateBackupReminder() {
+  if (!backupReminderEl) return;
+  backupReminderEl.classList.toggle("hidden", daysSinceLastBackup() < BACKUP_REMINDER_DAYS);
+}
+
+if (updateBannerEl) {
+  updateBannerEl.addEventListener("click", () => window.location.reload());
+}
+
 /* ==========================================================
    画面切り替え（タブ）
    ========================================================== */
@@ -291,8 +515,14 @@ function setSyncStatus(online) {
 const views = {
   day: document.getElementById("view-day"),
   calendar: document.getElementById("view-calendar"),
+  analysis: document.getElementById("view-analysis"),
+  exams: document.getElementById("view-exams"),
   settings: document.getElementById("view-settings"),
+  report: document.getElementById("view-report"),
 };
+
+/** 画面ごとの描き直し処理。exams.js / analysis.js が登録する */
+const viewRenderers = {};
 
 function showView(name) {
   Object.entries(views).forEach(([key, el]) => {
@@ -301,9 +531,9 @@ function showView(name) {
   document.querySelectorAll(".nav-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.view === name);
   });
-  if (name === "calendar") {
-    renderCalendar();
-  }
+  document.body.classList.toggle("report-open", name === "report");
+  if (viewRenderers[name]) viewRenderers[name]();
+  window.scrollTo(0, 0);
 }
 
 document.querySelectorAll(".nav-btn").forEach((btn) => {
@@ -440,10 +670,8 @@ async function onTimeInputChange() {
     notDone: false,
     eye: state.currentEye,
   });
-  notDoneBtn.setAttribute("aria-pressed", "false");
-  setSlotsEnabled(true);
-  updateRing(updated.minutes, false);
-  flashStatus("保存しました");
+  applyRecordToUI(updated);
+  if (!readOnlyMode) flashStatus("保存しました");
 }
 
 timeSlotsEl.querySelectorAll(".time-input").forEach((el) => {
@@ -468,16 +696,113 @@ notDoneBtn.addEventListener("click", async () => {
 
   const updated = await saveRecordPatch(state.currentEditDate, patch);
   applyRecordToUI(updated);
-  flashStatus(nextNotDone ? "「未実施」として保存しました" : "記録の入力に戻りました");
+  if (!readOnlyMode) flashStatus(nextNotDone ? "「未実施」として保存しました" : "記録の入力に戻りました");
 });
 
 memoInput.addEventListener("blur", async () => {
   await saveRecordPatch(state.currentEditDate, { memo: memoInput.value });
-  flashStatus("保存しました");
+  if (!readOnlyMode) flashStatus("保存しました");
 });
 
 backToTodayBtn.addEventListener("click", () => {
   loadDayView(todayKey());
+});
+
+/* ==========================================================
+   集計期間（カレンダー画面と分析画面で共通）
+   ========================================================== */
+
+/** 開始日・終了日を並べ替えて返す */
+function periodRange() {
+  const start = state.periodStart <= state.periodEnd ? state.periodStart : state.periodEnd;
+  const end = state.periodStart <= state.periodEnd ? state.periodEnd : state.periodStart;
+  return { start, end };
+}
+
+/**
+ * 集計に使う期間。終了日が未来のときは「今日まで」で数える
+ * （まだ来ていない日を「記録なし」として平均に含めないため）
+ */
+function effectivePeriod() {
+  const { start, end } = periodRange();
+  const today = todayKey();
+  const effEnd = end > today ? today : end;
+  const dayCount = effEnd < start ? 0 : diffDays(start, effEnd) + 1;
+  return { start, end, effEnd, dayCount, capped: end > today };
+}
+
+function syncPeriodInputs() {
+  document.querySelectorAll(".js-period-start").forEach((el) => {
+    el.value = state.periodStart;
+  });
+  document.querySelectorAll(".js-period-end").forEach((el) => {
+    el.value = state.periodEnd;
+  });
+}
+
+function latestExamOnOrBefore(key) {
+  const list = getAllExams().filter((e) => e.date <= key);
+  return list.length ? list[list.length - 1] : null;
+}
+
+function renderPeriodPresets() {
+  const containers = document.querySelectorAll(".period-presets");
+  if (!containers.length) return;
+
+  const today = todayKey();
+  const now = new Date();
+  const month = monthRange(now.getFullYear(), now.getMonth());
+  const presets = [
+    { label: "今月", start: month.start, end: month.end },
+    { label: "直近30日", start: addDays(today, -29), end: today },
+  ];
+  const lastExam = latestExamOnOrBefore(today);
+  if (lastExam) {
+    presets.push({ label: "前回の診察日〜今日", start: lastExam.date, end: today });
+    if (lastExam.nextVisitDate && lastExam.nextVisitDate >= lastExam.date) {
+      presets.push({ label: "前回の診察日〜次回の診察予定日", start: lastExam.date, end: lastExam.nextVisitDate });
+    }
+  }
+  const dates = [...recordsCache.keys()].sort();
+  if (dates.length) presets.push({ label: "全期間", start: dates[0], end: today });
+
+  containers.forEach((container) => {
+    container.innerHTML = "";
+    presets.forEach((p) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "preset-btn";
+      btn.textContent = p.label;
+      btn.addEventListener("click", () => {
+        state.periodStart = p.start;
+        state.periodEnd = p.end;
+        syncPeriodInputs();
+        rerenderPeriodViews();
+      });
+      container.appendChild(btn);
+    });
+  });
+}
+
+function rerenderPeriodViews() {
+  if (views.calendar.classList.contains("active")) renderCalendar();
+  if (views.analysis.classList.contains("active") && viewRenderers.analysis) viewRenderers.analysis();
+}
+
+document.querySelectorAll(".js-period-start").forEach((el) => {
+  el.addEventListener("change", () => {
+    if (el.value) state.periodStart = el.value;
+    syncPeriodInputs();
+    rerenderPeriodViews();
+  });
+});
+
+document.querySelectorAll(".js-period-end").forEach((el) => {
+  el.addEventListener("change", () => {
+    if (el.value) state.periodEnd = el.value;
+    syncPeriodInputs();
+    rerenderPeriodViews();
+  });
 });
 
 /* ==========================================================
@@ -486,11 +811,10 @@ backToTodayBtn.addEventListener("click", () => {
 
 const calTitle = document.getElementById("cal-title");
 const calGrid = document.getElementById("calendar-grid");
-const periodStartInput = document.getElementById("period-start-input");
-const periodEndInput = document.getElementById("period-end-input");
 const periodTotalEl = document.getElementById("period-total");
 const periodAverageEl = document.getElementById("period-average");
 const periodWearDaysEl = document.getElementById("period-wear-days");
+const periodNoteEl = document.getElementById("period-note");
 const calendarEyeIndicatorEl = document.getElementById("calendar-eye-indicator");
 
 /** 1時間=1、15分刻み(0.25)で装着時間を表す文字列にする */
@@ -524,6 +848,7 @@ async function renderCalendar() {
 
   const allRecords = await getAllRecords();
   const recordMap = new Map(allRecords.map((r) => [r.date, r]));
+  const examDates = new Set(getAllExams().map((e) => e.date));
 
   const firstDay = new Date(calendarYear, calendarMonth, 1);
   const daysInMonth = new Date(calendarYear, calendarMonth + 1, 0).getDate();
@@ -558,6 +883,13 @@ async function renderCalendar() {
         cell.appendChild(hoursEl);
       }
 
+      if (examDates.has(key)) {
+        const examEl = document.createElement("span");
+        examEl.className = "cal-exam";
+        examEl.textContent = "診";
+        cell.appendChild(examEl);
+      }
+
       if (record) {
         if (record.notDone) {
           cell.classList.add("status-not-done");
@@ -578,43 +910,164 @@ async function renderCalendar() {
     calGrid.appendChild(cell);
   }
 
-  periodStartInput.value = state.periodStart;
-  periodEndInput.value = state.periodEnd;
+  syncPeriodInputs();
+  renderPeriodPresets();
   renderPeriodSummary(allRecords);
 }
 
 function renderPeriodSummary(recordsList) {
-  const rangeStart = state.periodStart < state.periodEnd ? state.periodStart : state.periodEnd;
-  const rangeEnd = state.periodStart < state.periodEnd ? state.periodEnd : state.periodStart;
-
-  const dayCount =
-    Math.round((keyToDate(rangeEnd) - keyToDate(rangeStart)) / 86400000) + 1;
-
-  const recordsInRange = recordsList.filter((r) => r.date >= rangeStart && r.date <= rangeEnd);
+  const p = effectivePeriod();
+  const recordsInRange = recordsList.filter((r) => r.date >= p.start && r.date <= p.effEnd);
 
   const total = recordsInRange.reduce((sum, r) => sum + (r.minutes || 0), 0);
-  const average = dayCount > 0 ? total / dayCount : 0;
+  const average = p.dayCount > 0 ? total / p.dayCount : 0;
   const wearDays = recordsInRange.filter((r) => !r.notDone && (r.minutes || 0) > 0).length;
 
   periodTotalEl.textContent = `${total}分`;
   periodAverageEl.textContent = `${average.toFixed(1)}分/日`;
-  periodWearDaysEl.textContent = `${wearDays}日 / ${dayCount}日`;
+  periodWearDaysEl.textContent = `${wearDays}日 / ${p.dayCount}日`;
+  periodNoteEl.textContent = p.capped
+    ? `終了日が今日より先なので、今日までの${p.dayCount}日間で計算しています。`
+    : "";
 }
 
-async function updatePeriodSummaryOnly() {
-  const allRecords = await getAllRecords();
-  renderPeriodSummary(allRecords);
+viewRenderers.calendar = renderCalendar;
+
+/* ==========================================================
+   CSV・バックアップ（ファイルの書き出し／読み込み）
+   ========================================================== */
+
+function downloadText(filename, text, mime) {
+  const blob = new Blob([text], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-periodStartInput.addEventListener("change", () => {
-  if (periodStartInput.value) state.periodStart = periodStartInput.value;
-  updatePeriodSummaryOnly();
-});
+/** CSVの1マスぶんの文字列にする（カンマ・改行・引用符の処理、Excelでの式の誤動作防止） */
+function csvEscape(value) {
+  let s = value === null || value === undefined ? "" : String(value);
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/[",\r\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
 
-periodEndInput.addEventListener("change", () => {
-  if (periodEndInput.value) state.periodEnd = periodEndInput.value;
-  updatePeriodSummaryOnly();
-});
+function downloadCsv(filename, rows) {
+  const text = "﻿" + rows.map((r) => r.map(csvEscape).join(",")).join("\r\n") + "\r\n";
+  downloadText(filename, text, "text/csv;charset=utf-8");
+}
+
+/** 開始日〜終了日の記録を、1日1行（記録がない日も含む）の表にする */
+function buildRecordsCsvRows(startKey, endKey) {
+  const rows = [
+    ["日付", "曜日", "状態", "目標達成", "パッチする目", "開始1", "終了1", "開始2", "終了2", "装着時間（分）", "装着時間（時間）", "メモ"],
+  ];
+  const goal = state.dailyGoalMinutes;
+  const n = diffDays(startKey, endKey) + 1;
+  for (let i = 0; i < n; i++) {
+    const key = addDays(startKey, i);
+    const r = recordsCache.get(key);
+    let status = "記録なし";
+    let achieved = "";
+    let minutes = "";
+    let hours = "";
+    if (r) {
+      if (r.notDone) {
+        status = "未実施";
+      } else {
+        minutes = r.minutes || 0;
+        hours = Math.round((minutes / 60) * 100) / 100;
+        status = minutes > 0 ? "装着" : "装着なし（0分）";
+        achieved = minutes >= goal ? "達成" : "未達";
+      }
+    }
+    rows.push([
+      key,
+      WEEKDAYS[keyToDate(key).getDay()],
+      status,
+      achieved,
+      r && r.eye ? eyeLabel(r.eye) : "",
+      r ? r.slot1Start || "" : "",
+      r ? r.slot1End || "" : "",
+      r ? r.slot2Start || "" : "",
+      r ? r.slot2End || "" : "",
+      minutes,
+      hours,
+      r ? r.memo || "" : "",
+    ]);
+  }
+  return rows;
+}
+
+function buildExamsCsvRows() {
+  const rows = [
+    ["診察日", "右目 裸眼", "右目 眼鏡あり", "左目 裸眼", "左目 眼鏡あり", "次回診察予定日", "コメント"],
+  ];
+  getAllExams().forEach((e) => {
+    const cell = (v) => (v === null || v === undefined ? "" : acuityLabel(v));
+    rows.push([
+      e.date,
+      cell(e.rightNaked),
+      cell(e.rightGlasses),
+      cell(e.leftNaked),
+      cell(e.leftGlasses),
+      e.nextVisitDate || "",
+      e.comment || "",
+    ]);
+  });
+  return rows;
+}
+
+function exportPeriodCsv() {
+  const p = effectivePeriod();
+  if (p.dayCount <= 0) {
+    flashBackupStatus("期間に今日までの日がありません。期間を確認してください");
+    return false;
+  }
+  downloadCsv(`アイパッチ記録_${p.start}_${p.effEnd}.csv`, buildRecordsCsvRows(p.start, p.effEnd));
+  return true;
+}
+
+function exportAllRecordsCsv() {
+  const dates = [...recordsCache.keys()].sort();
+  if (!dates.length) {
+    flashBackupStatus("まだ記録がありません");
+    return;
+  }
+  const end = dates[dates.length - 1] > todayKey() ? dates[dates.length - 1] : todayKey();
+  downloadCsv(`アイパッチ記録_全期間_${todayKey()}.csv`, buildRecordsCsvRows(dates[0], end));
+  flashBackupStatus("CSVを書き出しました");
+}
+
+function buildBackupObject() {
+  return {
+    exportedAt: new Date().toISOString(),
+    version: 3,
+    appVersion: APP_VERSION,
+    schemaVersion: DATA_SCHEMA_VERSION,
+    settings: {
+      dailyGoalMinutes: state.dailyGoalMinutes,
+      currentEye: state.currentEye,
+      childName: settingsCache.childName || "",
+    },
+    records: [...recordsCache.values()].sort((a, b) => (a.date < b.date ? -1 : 1)),
+    exams: getAllExams(),
+  };
+}
+
+function downloadBackupJson(label) {
+  const data = buildBackupObject();
+  downloadText(
+    `${label}_${todayKey()}.json`,
+    JSON.stringify(data, null, 2),
+    "application/json"
+  );
+}
 
 /* ==========================================================
    設定画面
@@ -626,10 +1079,17 @@ const householdCodeSaveBtn = document.getElementById("household-code-save-btn");
 const eyeToggleButtons = document.querySelectorAll(".eye-toggle-btn");
 const goalInput = document.getElementById("goal-input");
 const goalSaveBtn = document.getElementById("goal-save-btn");
+const childNameInput = document.getElementById("child-name-input");
+const childNameSaveBtn = document.getElementById("child-name-save-btn");
 const exportBtn = document.getElementById("export-btn");
 const importBtn = document.getElementById("import-btn");
 const importFile = document.getElementById("import-file");
 const backupStatus = document.getElementById("backup-status");
+const csvAllBtn = document.getElementById("csv-all-btn");
+const csvExamsBtn = document.getElementById("csv-exams-btn");
+const appVersionText = document.getElementById("app-version-text");
+const dataStatusText = document.getElementById("data-status-text");
+const lastBackupText = document.getElementById("last-backup-text");
 
 let backupStatusTimer = null;
 function flashBackupStatus(message) {
@@ -637,8 +1097,22 @@ function flashBackupStatus(message) {
   if (backupStatusTimer) clearTimeout(backupStatusTimer);
   backupStatusTimer = setTimeout(() => {
     backupStatus.textContent = " ";
-  }, 2200);
+  }, 2600);
 }
+
+function renderSettingsInfo() {
+  appVersionText.textContent = `アプリのバージョン：${APP_VERSION}（データ形式 ${DATA_SCHEMA_VERSION}）`;
+  const dataVersion = typeof metaCache.schemaVersion === "number" ? metaCache.schemaVersion : 1;
+  dataStatusText.textContent = readOnlyMode
+    ? `データの状態：このアプリより新しい形式です（形式 ${dataVersion}）。壊さないよう保存を止めています`
+    : "データの状態：正常";
+  const last = lsGet(LAST_BACKUP_KEY);
+  lastBackupText.textContent = last
+    ? `この端末での前回のバックアップ：${dateToKey(new Date(last))}`
+    : "この端末ではまだバックアップを書き出していません";
+}
+
+viewRenderers.settings = renderSettingsInfo;
 
 householdCodeCopyBtn.addEventListener("click", async () => {
   try {
@@ -667,6 +1141,7 @@ householdCodeSaveBtn.addEventListener("click", async () => {
   householdCode = saveHouseholdCode(newCode);
   householdCodeInput.value = householdCode;
   await attachListeners();
+  await ensureSchemaMarker();
   await loadDayView(state.currentEditDate);
   flashBackupStatus("共有コードを切り替えました");
 });
@@ -699,24 +1174,36 @@ goalSaveBtn.addEventListener("click", async () => {
   flashBackupStatus("目標を保存しました");
 });
 
-exportBtn.addEventListener("click", async () => {
-  const records = await getAllRecords();
-  const data = {
-    exportedAt: new Date().toISOString(),
-    version: 2,
-    settings: { dailyGoalMinutes: state.dailyGoalMinutes, currentEye: state.currentEye },
-    records: records.sort((a, b) => (a.date < b.date ? -1 : 1)),
-  };
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  const stamp = dateToKey(new Date());
-  a.href = url;
-  a.download = `弱視トレーニング記録_${stamp}.json`;
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  URL.revokeObjectURL(url);
+childNameSaveBtn.addEventListener("click", async () => {
+  const name = childNameInput.value.trim().slice(0, 30);
+  childNameInput.value = name;
+  await setSetting("childName", name);
+  flashBackupStatus(name ? "お名前を保存しました" : "お名前を空にしました");
+});
+
+csvAllBtn.addEventListener("click", exportAllRecordsCsv);
+
+csvExamsBtn.addEventListener("click", () => {
+  if (!examsCache.size) {
+    flashBackupStatus("まだ診察記録がありません");
+    return;
+  }
+  downloadCsv(`診察記録_${todayKey()}.csv`, buildExamsCsvRows());
+  flashBackupStatus("CSVを書き出しました");
+});
+
+const periodCsvBtn = document.getElementById("period-csv-btn");
+if (periodCsvBtn) {
+  periodCsvBtn.addEventListener("click", () => {
+    if (exportPeriodCsv()) periodCsvBtn.textContent = "書き出しました（もう一度押すと再度書き出し）";
+  });
+}
+
+exportBtn.addEventListener("click", () => {
+  downloadBackupJson("弱視トレーニング記録");
+  lsSet(LAST_BACKUP_KEY, new Date().toISOString());
+  updateBackupReminder();
+  renderSettingsInfo();
   flashBackupStatus("書き出しました");
 });
 
@@ -735,26 +1222,43 @@ importFile.addEventListener("change", async () => {
     if (!data || !Array.isArray(data.records)) {
       throw new Error("invalid format");
     }
+    if (typeof data.schemaVersion === "number" && data.schemaVersion > DATA_SCHEMA_VERSION) {
+      flashBackupStatus("このファイルは、より新しい版のアプリで作られています。アプリを更新してください");
+      return;
+    }
+    if (!guardWrite()) return;
+
+    const records = data.records.filter((r) => r && typeof r.date === "string" && DATE_KEY_PATTERN.test(r.date));
+    const hasExams = Array.isArray(data.exams);
+    const exams = hasExams
+      ? data.exams.filter((e) => e && typeof e.date === "string" && DATE_KEY_PATTERN.test(e.date))
+      : [];
+
     const ok = window.confirm(
-      "今の共有コードのデータを、このファイルの内容ですべて置き換えます。よろしいですか？"
+      `今の共有コードのデータを、このファイルの内容で置き換えます。\n` +
+        `・記録 ${records.length}件（今ある記録はすべて置き換え）\n` +
+        (hasExams
+          ? `・診察記録 ${exams.length}件（今ある診察記録はすべて置き換え）\n`
+          : `・診察記録：このファイルには含まれていないため、今のまま残します\n`) +
+        `\n置き換える前に、今のデータを自動でファイルに書き出します。よろしいですか？`
     );
     if (!ok) return;
 
-    await clearRecords();
-    for (const r of data.records) {
-      if (!r || typeof r.date !== "string") continue;
-      await putRecord({
-        date: r.date,
-        slot1Start: typeof r.slot1Start === "string" ? r.slot1Start : null,
-        slot1End: typeof r.slot1End === "string" ? r.slot1End : null,
-        slot2Start: typeof r.slot2Start === "string" ? r.slot2Start : null,
-        slot2End: typeof r.slot2End === "string" ? r.slot2End : null,
-        minutes: Number(r.minutes) || 0,
-        notDone: !!r.notDone,
-        eye: r.eye === "left" ? "left" : r.eye === "right" ? "right" : null,
-        memo: typeof r.memo === "string" ? r.memo : "",
-        updatedAt: r.updatedAt || new Date().toISOString(),
-      });
+    downloadBackupJson("取り込み前の自動バックアップ");
+
+    await replaceAllDocs(
+      recordsCol(),
+      records.map((r) => ({ id: r.date, data: sanitizeRecord(r) }))
+    );
+
+    if (hasExams) {
+      await replaceAllDocs(
+        examsCol(),
+        exams.map((e) => ({
+          id: typeof e.id === "string" && /^[A-Za-z0-9_-]{1,40}$/.test(e.id) ? e.id : examsCol().doc().id,
+          data: sanitizeExam(e),
+        }))
+      );
     }
 
     if (data.settings && Number(data.settings.dailyGoalMinutes) > 0) {
@@ -766,6 +1270,9 @@ importFile.addEventListener("change", async () => {
       state.currentEye = data.settings.currentEye;
       await setSetting("currentEye", state.currentEye);
       updateEyeToggleUI();
+    }
+    if (data.settings && typeof data.settings.childName === "string") {
+      await setSetting("childName", data.settings.childName.slice(0, 30));
     }
 
     await loadDayView(state.currentEditDate);
@@ -790,11 +1297,26 @@ function showConfigNotReadyMessage() {
     "</div>";
 }
 
+function setupServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+  const hadController = !!navigator.serviceWorker.controller;
+  navigator.serviceWorker.addEventListener("controllerchange", () => {
+    // すでにアプリを開いている状態で新しい版が入ったときだけお知らせする
+    if (hadController) showUpdateBanner();
+  });
+  navigator.serviceWorker.register("./sw.js").catch(() => {
+    /* オフライン対応ができなくても、アプリ自体は動作する */
+  });
+}
+
 async function init() {
   if (FIREBASE_NOT_CONFIGURED) {
     showConfigNotReadyMessage();
     return;
   }
+
+  if (!lsGet(FIRST_SEEN_KEY)) lsSet(FIRST_SEEN_KEY, new Date().toISOString());
+  updateBackupReminder();
 
   firebase.initializeApp(window.firebaseConfig);
   db = firebase.firestore();
@@ -808,19 +1330,18 @@ async function init() {
   householdCodeInput.value = householdCode;
 
   await attachListeners();
+  await ensureSchemaMarker();
 
   state.dailyGoalMinutes = settingsCache.dailyGoalMinutes;
   state.currentEye = settingsCache.currentEye;
   goalInput.value = state.dailyGoalMinutes;
+  childNameInput.value = settingsCache.childName;
   updateEyeToggleUI();
+  renderSettingsInfo();
 
   await loadDayView(todayKey());
 
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register("./sw.js").catch(() => {
-      /* オフライン対応ができなくても、アプリ自体は動作する */
-    });
-  }
+  setupServiceWorker();
 }
 
-init();
+document.addEventListener("DOMContentLoaded", init);

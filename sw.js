@@ -1,9 +1,12 @@
-const CACHE_NAME = "amblyopia-training-v4";
+const CACHE_NAME = "amblyopia-training-v5";
 const APP_SHELL = [
   "./",
   "./index.html",
   "./style.css",
   "./app.js",
+  "./analysis.js",
+  "./exams.js",
+  "./report.js",
   "./firebase-config.js",
   "./manifest.json",
   "./icons/icon-192.png",

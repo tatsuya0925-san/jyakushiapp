@@ -652,3 +652,922 @@ hr {
 .nav-icon {
   font-size: 22px;
 }
+
+/* ==========================================================
+   バージョン2で追加した部分
+   ========================================================== */
+
+:root {
+  --c-right: #2f7f78;
+  --c-left: #cf7a22;
+  --c-exam: #cf7a22;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --c-right: #6fc4ba;
+    --c-left: #e8a65c;
+    --c-exam: #e8a65c;
+  }
+}
+
+select {
+  width: 100%;
+  font-size: 18px;
+  padding: 14px 12px;
+  border-radius: 12px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+}
+
+select:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+/* ---------- お知らせバナー ---------- */
+
+.banner {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-size: 13px;
+  line-height: 1.5;
+  text-align: left;
+}
+
+.banner-update {
+  display: block;
+  width: 100%;
+  border: none;
+  background: var(--color-primary);
+  color: var(--color-primary-contrast);
+  font-weight: 700;
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.banner-warn {
+  background: #fde8e6;
+  color: #8a1c14;
+  border: 1px solid #e9a8a2;
+}
+
+.banner-note {
+  background: var(--color-accent-light);
+  color: var(--color-text);
+}
+
+@media (prefers-color-scheme: dark) {
+  .banner-warn {
+    background: #4a2320;
+    color: #ffd7d3;
+    border-color: #7a3a35;
+  }
+}
+
+/* ---------- 下部タブ（5つ） ---------- */
+
+.nav-btn {
+  font-size: 11px;
+  padding: 8px 0 6px;
+  min-width: 0;
+}
+
+.nav-icon {
+  font-size: 20px;
+}
+
+/* ---------- 期間のかんたん選択 ---------- */
+
+.period-presets {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.preset-btn {
+  font-size: 13px;
+  padding: 8px 12px;
+  border-radius: 999px;
+  border: 1px solid var(--color-border);
+  background: var(--color-surface);
+  color: var(--color-text);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.period-panel-top {
+  margin-top: 4px;
+  padding-top: 0;
+  border-top: none;
+}
+
+/* ---------- カレンダーの診察日の印 ---------- */
+
+.cal-exam {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  font-size: 9px;
+  font-weight: 700;
+  color: var(--c-exam);
+  pointer-events: none;
+}
+
+.cal-cell.status-achieved .cal-exam {
+  color: var(--color-primary-contrast);
+}
+
+/* ---------- 分析画面 ---------- */
+
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.stat-tile {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 12px;
+  text-align: center;
+}
+
+.stat-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: var(--color-primary);
+  line-height: 1.3;
+}
+
+.stat-sub {
+  font-size: 11px;
+  color: var(--color-text-muted);
+}
+
+.analysis-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 14px 12px;
+  margin-bottom: 14px;
+}
+
+.analysis-title {
+  margin: 0 0 8px;
+  font-size: 15px;
+}
+
+.chart-note {
+  margin: 6px 0 0;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.comment-list {
+  margin: 0;
+  padding-left: 20px;
+  font-size: 15px;
+}
+
+.comment-list li {
+  margin-bottom: 6px;
+}
+
+.analysis-actions {
+  margin-top: 22px;
+}
+
+/* ---------- グラフ（SVG） ---------- */
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.ch-grid {
+  stroke: var(--color-border);
+  stroke-width: 1;
+}
+
+.ch-base {
+  stroke: var(--color-text-muted);
+  stroke-width: 1;
+}
+
+.ch-axis {
+  fill: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.ch-val {
+  fill: var(--color-text);
+  font-size: 10px;
+}
+
+.ch-bar {
+  fill: var(--color-accent-light);
+  stroke: var(--color-primary);
+  stroke-width: 0.6;
+}
+
+.ch-bar-hi {
+  fill: var(--color-primary);
+}
+
+.ch-goal {
+  stroke: var(--color-not-done-dark);
+  stroke-width: 1.2;
+  stroke-dasharray: 4 3;
+}
+
+.ch-goal-text {
+  fill: var(--color-text-muted);
+  font-size: 10px;
+}
+
+.ch-notdone {
+  fill: var(--color-not-done-dark);
+}
+
+polyline.ch-line,
+polyline.ch-avg {
+  fill: none;
+  stroke-linejoin: round;
+}
+
+.ch-avg {
+  stroke: var(--color-primary-dark);
+  stroke-width: 1.8;
+}
+
+.ch-line {
+  stroke-width: 1.7;
+}
+
+.ch-dashed {
+  stroke-dasharray: 5 3;
+}
+
+.ch-exam {
+  stroke: var(--c-exam);
+  stroke-width: 1;
+  stroke-dasharray: 2 3;
+}
+
+.ch-exam-text {
+  fill: var(--c-exam);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.ch-s-rn,
+.ch-s-rg {
+  stroke: var(--c-right);
+  fill: var(--c-right);
+}
+
+.ch-s-ln,
+.ch-s-lg {
+  stroke: var(--c-left);
+  fill: var(--c-left);
+}
+
+.ch-marker {
+  stroke-width: 1.6;
+}
+
+.ch-marker.ch-hollow {
+  fill: var(--color-surface);
+}
+
+.ch-legend-text {
+  font-size: 10.5px;
+}
+
+/* ---------- 診察記録画面 ---------- */
+
+.exam-next-visit {
+  font-weight: 700;
+  color: var(--color-primary);
+  margin: 0 0 12px;
+}
+
+.exam-form {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 16px 14px;
+  margin-bottom: 18px;
+}
+
+.exam-eye-group {
+  margin-bottom: 12px;
+}
+
+.exam-eye-title {
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.exam-select-row {
+  display: flex;
+  gap: 10px;
+}
+
+.exam-select-field {
+  flex: 1;
+}
+
+.exam-select-field label {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  margin-bottom: 4px;
+}
+
+.exam-form-status {
+  color: #b3261e;
+}
+
+.btn-danger {
+  display: block;
+  width: 100%;
+  font-size: 16px;
+  font-weight: 600;
+  padding: 13px 0;
+  border-radius: 12px;
+  border: 1px solid #c9544b;
+  background: var(--color-surface);
+  color: #b3261e;
+  cursor: pointer;
+  margin-bottom: 12px;
+}
+
+.exam-card {
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: 14px;
+  padding: 12px 14px;
+  margin-bottom: 12px;
+}
+
+.exam-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.exam-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 15px;
+  text-align: center;
+}
+
+.exam-table th,
+.exam-table td {
+  border: 1px solid var(--color-border);
+  padding: 6px 4px;
+}
+
+.exam-table thead th {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-weight: 600;
+}
+
+.exam-table tbody th {
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.exam-unmeasured {
+  color: var(--color-text-muted);
+  font-size: 13px;
+}
+
+.exam-comment {
+  margin: 10px 0 0;
+  font-size: 15px;
+}
+
+.exam-next {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.exam-chart-title {
+  margin-top: 22px;
+}
+
+/* ---------- 印刷用紙の画面 ---------- */
+
+.report-toolbar {
+  display: flex;
+  gap: 10px;
+}
+
+.report-toolbar .btn-secondary,
+.report-toolbar .btn-primary {
+  margin-bottom: 8px;
+}
+
+.report-hint {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  margin: 0 0 12px;
+}
+
+body.report-open #bottom-nav {
+  display: none;
+}
+
+body.report-open #app {
+  max-width: none;
+}
+
+.report-sheet {
+  overflow-x: hidden;
+}
+
+.report-page {
+  width: 277mm;
+  height: 189mm;
+  box-sizing: border-box;
+  overflow: hidden;
+  background: #fff;
+  color: #000;
+  box-shadow: 0 0 0 1px #aaa;
+  margin: 0 0 14px;
+  font-size: 9pt;
+  line-height: 1.3;
+  font-family: "Hiragino Sans", "Yu Gothic", "Noto Sans JP", system-ui, sans-serif;
+}
+
+.rp-title {
+  font-size: 15pt;
+  margin: 0 0 2.5mm;
+}
+
+.rp-meta,
+.rp-summary {
+  width: 100%;
+  border-collapse: collapse;
+  margin-bottom: 2.5mm;
+}
+
+.rp-meta th,
+.rp-meta td,
+.rp-summary th,
+.rp-summary td {
+  border: 0.3mm solid #555;
+  padding: 0.9mm 2mm;
+  text-align: left;
+}
+
+.rp-meta th {
+  width: 24mm;
+  font-weight: 700;
+}
+
+.rp-name {
+  width: 70mm;
+}
+
+.rp-summary th {
+  font-size: 7.5pt;
+  font-weight: 700;
+  text-align: center;
+}
+
+.rp-summary td {
+  font-size: 10.5pt;
+  font-weight: 700;
+  text-align: center;
+}
+
+.rp-blocks {
+  display: flex;
+  gap: 4mm;
+  align-items: flex-start;
+}
+
+.rp-days {
+  flex: 1;
+  border-collapse: collapse;
+  font-size: 7.5pt;
+}
+
+.rp-days th,
+.rp-days td {
+  border: 0.2mm solid #777;
+  padding: 0 1mm;
+  height: 4.4mm;
+  line-height: 1.1;
+}
+
+.rp-days th {
+  font-weight: 700;
+  text-align: center;
+}
+
+.rp-date {
+  width: 17mm;
+  white-space: nowrap;
+}
+
+.rp-times {
+  white-space: nowrap;
+}
+
+.rp-min {
+  width: 12mm;
+  text-align: right;
+}
+
+.rp-mark {
+  width: 9mm;
+  text-align: center;
+  font-weight: 700;
+}
+
+.rp-legend,
+.rp-chart-note,
+.rp-footer {
+  font-size: 7.5pt;
+  color: #222;
+  margin-top: 1.5mm;
+}
+
+.rp-subhead {
+  font-size: 12pt;
+  font-weight: 700;
+  margin: 0 0 3mm;
+  border-bottom: 0.4mm solid #000;
+}
+
+.rp-charts {
+  display: grid;
+  gap: 3mm;
+  align-items: start;
+}
+
+.rp-charts-2 {
+  grid-template-columns: 1fr 1fr;
+}
+
+.rp-charts-3 {
+  grid-template-columns: 1fr 1fr 1fr;
+  margin-top: 3mm;
+}
+
+.rp-chart-title {
+  font-size: 9pt;
+  font-weight: 700;
+}
+
+.rp-comments {
+  margin: 0;
+  padding-left: 5mm;
+  font-size: 9.5pt;
+}
+
+.rp-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 8.5pt;
+}
+
+.rp-table th,
+.rp-table td {
+  border: 0.2mm solid #777;
+  padding: 0.8mm 1.5mm;
+  text-align: center;
+}
+
+.rp-table .rp-comment {
+  text-align: left;
+}
+
+.rp-empty {
+  font-size: 9pt;
+}
+
+.report-sheet .ch-grid {
+  stroke: #d4d4d4;
+}
+
+.report-sheet .ch-base {
+  stroke: #333;
+}
+
+.report-sheet .ch-axis,
+.report-sheet .ch-val,
+.report-sheet .ch-goal-text {
+  fill: #222;
+}
+
+.report-sheet .ch-bar {
+  fill: #f1f1f1;
+  stroke: #555;
+}
+
+.report-sheet .ch-bar-hi {
+  fill: #b9b9b9;
+  stroke: #333;
+}
+
+.report-sheet .ch-goal {
+  stroke: #000;
+}
+
+.report-sheet .ch-avg {
+  stroke: #000;
+}
+
+.report-sheet .ch-notdone {
+  fill: #555;
+}
+
+.report-sheet .ch-exam {
+  stroke: #000;
+}
+
+.report-sheet .ch-exam-text {
+  fill: #000;
+}
+
+.report-sheet .ch-s-rn,
+.report-sheet .ch-s-rg,
+.report-sheet .ch-s-ln,
+.report-sheet .ch-s-lg {
+  stroke: #000;
+  fill: #000;
+}
+
+.report-sheet .ch-marker.ch-hollow {
+  fill: #fff;
+}
+
+@media print {
+  @page {
+    size: A4 landscape;
+    margin: 10mm;
+  }
+
+  html,
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    height: auto;
+  }
+
+  .app-header,
+  #bottom-nav,
+  .report-toolbar,
+  .report-hint {
+    display: none !important;
+  }
+
+  #app {
+    display: block;
+    max-width: none;
+    min-height: 0;
+  }
+
+  main {
+    padding: 0;
+  }
+
+  .report-sheet {
+    zoom: 1 !important;
+    overflow: visible;
+  }
+
+  .report-page {
+    box-shadow: none;
+    margin: 0;
+    break-after: page;
+    page-break-after: always;
+  }
+
+  .report-page:last-child {
+    break-after: auto;
+    page-break-after: auto;
+  }
+}
+
+/* 日付入力が狭い画面ではみ出さないようにする */
+.period-field {
+  min-width: 0;
+}
+
+.period-range-row input[type="date"] {
+  min-width: 0;
+  font-size: 16px;
+  padding: 12px 8px;
+}
+
+/* 日ごとの記録表（印刷用紙）：上の共通の表スタイルより優先させる */
+.rp-table.rp-days {
+  font-size: 7.5pt;
+}
+
+.rp-table.rp-days th,
+.rp-table.rp-days td {
+  padding: 0 1mm;
+  height: 4.4mm;
+  line-height: 1.1;
+}
+
+/* ---------- 印刷用紙 1ページ目：アイパッチ日記（紙と同じ形） ---------- */
+
+.report-options {
+  margin-bottom: 14px;
+}
+
+.report-options label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  margin-bottom: 6px;
+}
+
+.report-options input[type="checkbox"] {
+  width: 20px;
+  height: 20px;
+}
+
+.report-page.dp-page {
+  display: flex;
+  gap: 8mm;
+}
+
+.dp-main {
+  flex: 1;
+  min-width: 0;
+}
+
+.dp-title {
+  font-size: 16pt;
+  margin: 0 0 2mm;
+  text-align: center;
+}
+
+.dp-grid {
+  width: 100%;
+  table-layout: fixed;
+  border-collapse: collapse;
+}
+
+.dp-grid th {
+  border: 0.4mm solid #000;
+  height: 7mm;
+  padding: 0;
+  font-size: 10pt;
+  text-align: center;
+}
+
+.dp-grid td {
+  border: 0.4mm solid #000;
+  height: 13mm;
+  padding: 0.6mm 1mm;
+  vertical-align: top;
+}
+
+.dp-grid td.dp-out {
+  border: 0.2mm solid #ccc;
+}
+
+.dp-d {
+  font-size: 7pt;
+  line-height: 1;
+  color: #222;
+}
+
+.dp-h {
+  margin-top: 1mm;
+  font-size: 14pt;
+  font-weight: 700;
+  line-height: 1.1;
+  text-align: center;
+}
+
+.dp-h-not {
+  font-size: 10pt;
+  font-weight: 400;
+}
+
+.dp-side {
+  flex: none;
+  width: 84mm;
+  font-size: 10pt;
+}
+
+.dp-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2mm;
+  margin-bottom: 3mm;
+}
+
+.dp-label {
+  font-weight: 700;
+}
+
+.dp-fill {
+  flex: 1;
+  min-width: 30mm;
+  min-height: 6mm;
+  border-bottom: 0.3mm solid #000;
+}
+
+.dp-eye {
+  display: inline-block;
+  width: 8mm;
+  height: 8mm;
+  line-height: 8mm;
+  text-align: center;
+  font-weight: 700;
+}
+
+.dp-eye-on {
+  border: 0.4mm solid #000;
+  border-radius: 50%;
+}
+
+.dp-note {
+  margin: 4mm 0;
+  font-size: 7.5pt;
+  line-height: 1.4;
+}
+
+.dp-total {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.dp-total th,
+.dp-total td {
+  border: 0.4mm solid #000;
+  padding: 2mm;
+}
+
+.dp-total th {
+  width: 54%;
+  font-size: 10pt;
+  text-align: left;
+}
+
+.dp-total th small {
+  display: block;
+  font-size: 7pt;
+  font-weight: 400;
+}
+
+.dp-total td {
+  font-size: 12pt;
+  font-weight: 700;
+  text-align: center;
+}
+
+.rp-table.rp-days {
+  table-layout: fixed;
+}
+
+.rp-table.rp-days th:nth-child(1) { width: 17mm; }
+.rp-table.rp-days th:nth-child(2) { width: 30mm; }
+.rp-table.rp-days th:nth-child(3) { width: 11mm; }
+.rp-table.rp-days th:nth-child(4) { width: 8mm; }
+
+.rp-table.rp-days td {
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.rp-table.rp-days td.rp-memo {
+  text-align: left;
+}
+
+@media print {
+  .report-options {
+    display: none !important;
+  }
+}
