@@ -11,7 +11,7 @@ const reportSheetEl = document.getElementById("report-sheet");
 const reportBackBtn = document.getElementById("report-back-btn");
 const reportPrintBtn = document.getElementById("report-print-btn");
 
-const REPORT_PAGE_WIDTH_PX = 1047; // A4横 277mm を画面上のピクセルに換算したおおよその値
+const REPORT_PAGE_WIDTH_PX = 1009; // 用紙の内側の幅 267mm（A4横 297mm − 左右の余白15mm×2）を画面上のピクセルに換算した値
 const DIARY_WEEKS_PER_PAGE = 12;
 const REPORT_ROWS_PER_BLOCK = 30;
 const REPORT_BLOCKS_PER_PAGE = 3;

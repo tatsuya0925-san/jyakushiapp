@@ -1,4 +1,4 @@
-const CACHE_NAME = "amblyopia-training-v5";
+const CACHE_NAME = "amblyopia-training-v6";
 const APP_SHELL = [
   "./",
   "./index.html",

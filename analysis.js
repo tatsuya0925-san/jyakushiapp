@@ -390,19 +390,27 @@ function monthAvgChartSvg(a) {
 
 /* ---------- 視力グラフ（診察記録） ---------- */
 
+// 4つとも「色・印の形・線の種類」がすべて違う（白黒印刷でも見分けられる）
 const ACUITY_SERIES = [
-  { key: "rightNaked", label: "右目 裸眼", shape: "circle", dashed: false, cls: "ch-s-rn" },
-  { key: "rightGlasses", label: "右目 眼鏡あり", shape: "circle", dashed: true, cls: "ch-s-rg" },
-  { key: "leftNaked", label: "左目 裸眼", shape: "square", dashed: false, cls: "ch-s-ln" },
-  { key: "leftGlasses", label: "左目 眼鏡あり", shape: "square", dashed: true, cls: "ch-s-lg" },
+  { key: "rightNaked", label: "右目 裸眼", shape: "circle", cls: "ch-s-rn" }, // 丸・実線
+  { key: "rightGlasses", label: "右目 眼鏡あり", shape: "triangle", cls: "ch-s-rg" }, // 三角・破線
+  { key: "leftNaked", label: "左目 裸眼", shape: "square", cls: "ch-s-ln" }, // 四角・点線
+  { key: "leftGlasses", label: "左目 眼鏡あり", shape: "diamond", cls: "ch-s-lg" }, // ひし形・一点鎖線
 ];
 
 function svgMarker(shape, x, y, cls, hollow) {
   const c = `${cls} ch-marker${hollow ? " ch-hollow" : ""}`;
+  const fx = x.toFixed(1);
   if (shape === "square") {
     return `<rect class="${c}" x="${(x - 3.4).toFixed(1)}" y="${(y - 3.4).toFixed(1)}" width="6.8" height="6.8"/>`;
   }
-  return `<circle class="${c}" cx="${x.toFixed(1)}" cy="${y.toFixed(1)}" r="3.6"/>`;
+  if (shape === "triangle") {
+    return `<polygon class="${c}" points="${fx},${(y - 4.4).toFixed(1)} ${(x + 4.2).toFixed(1)},${(y + 3.2).toFixed(1)} ${(x - 4.2).toFixed(1)},${(y + 3.2).toFixed(1)}"/>`;
+  }
+  if (shape === "diamond") {
+    return `<polygon class="${c}" points="${fx},${(y - 4.6).toFixed(1)} ${(x + 4.2).toFixed(1)},${y.toFixed(1)} ${fx},${(y + 4.6).toFixed(1)} ${(x - 4.2).toFixed(1)},${y.toFixed(1)}"/>`;
+  }
+  return `<circle class="${c}" cx="${fx}" cy="${y.toFixed(1)}" r="3.6"/>`;
 }
 
 /**
@@ -414,7 +422,7 @@ function svgAcuityChart(exams) {
   const H = 262;
   const L = 36;
   const R = 14;
-  const T = 18;
+  const T = 26;
   const plotBottom = 192;
   const ih = plotBottom - T;
   const iw = CHART_W - L - R;
@@ -441,7 +449,7 @@ function svgAcuityChart(exams) {
     });
     if (points.length >= 2) {
       const pts = points.map((p) => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
-      s += `<polyline class="ch-line ${series.cls}${series.dashed ? " ch-dashed" : ""}" points="${pts}"/>`;
+      s += `<polyline class="ch-line ${series.cls}" points="${pts}"/>`;
     }
     points.forEach((p) => {
       s += svgMarker(series.shape, p.x, p.y, series.cls, !p.measured);
@@ -464,7 +472,7 @@ function svgAcuityChart(exams) {
     const row = Math.floor(i / 2);
     const x0 = col === 0 ? L : CHART_W / 2 + 4;
     const y0 = 226 + row * 20;
-    s += `<line class="ch-line ${series.cls}${series.dashed ? " ch-dashed" : ""}" x1="${x0}" x2="${x0 + 22}" y1="${y0}" y2="${y0}"/>`;
+    s += `<line class="ch-line ${series.cls}" x1="${x0}" x2="${x0 + 22}" y1="${y0}" y2="${y0}"/>`;
     s += svgMarker(series.shape, x0 + 11, y0, series.cls, false);
     s += `<text class="ch-axis ch-legend-text" x="${x0 + 28}" y="${y0 + 3.5}">${series.label}</text>`;
   });

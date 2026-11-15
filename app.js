@@ -8,7 +8,7 @@
        2 = 診察記録を追加（2.0.0）。既存の記録の形は変えていない
    ========================================================== */
 
-const APP_VERSION = "2.0.0";
+const APP_VERSION = "2.0.1";
 const DATA_SCHEMA_VERSION = 2;
 
 const DEFAULT_GOAL_MINUTES = 120;
